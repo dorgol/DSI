@@ -142,13 +142,14 @@ Extrapolated:
 <font size = 4> https://www.lahsa.org/documents?id=2064-2018-greater-los-angeles-homeless-count-data-summary-vehicles-tents-and-makeshift-shelters-by-geographic-area.pdf </font>
 
 ========================================================
+type:beige
 incremental:true
 
-<img src="homelessness_data-figure/latimes_tents.png"; style="max-width:750px;">
+<img src="homelessness_data-figure/latimes_tents.png"; style="max-width:600px;">
 <small> "The average number of individuals living in each tent, for example, was fixed at 1.691 in the 2017 survey. This year it was reduced to 1.516, a difference of about one person for every five tents." </small>    
 <font size=5>  http://www.latimes.com/local/lanow/la-me-ln-homeless-count-analysis-20180711-story.html </font>
 
-- **Do agencies have an agenda?**
+<small>**Do agencies have an agenda?**</small>
 
 Where can statistical techniques help?
 ========================================================
@@ -159,11 +160,10 @@ incremental:true
 - Sampling strategy
 
    Estimate probability of being counted.    
-   Network-based, or respondent-driven sampling?
+   Network-based or respondent-driven sampling.
 
-- Extrapolation    
-<img src="homelessness_data-figure/density.png"; style="max-width:680px; float:right;">
-<!--https://economicrt.org/publication/estimating-the-annual-size-of-the-homeless-population/-->
+- Extrapolation <img src="homelessness_data-figure/density.png"; style="max-width:600px; float:right;">
+<font size = 5> https://economicrt.org/publication/estimating-the-annual-size-of-the-homeless-population/ </font>
 
 Visualization
 ========================================================

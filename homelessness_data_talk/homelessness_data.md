@@ -1,0 +1,190 @@
+<style>
+    .blue .reveal .state-background {
+  background: lightblue;
+} 
+
+.exclaim .reveal h1,
+.exclaim .reveal h2,
+.exclaim .reveal p {
+  color: white;
+}
+
+    .beige .reveal .state-background {
+  background: beige;
+} 
+
+.exclaim .reveal h1,
+.exclaim .reveal h2,
+.exclaim .reveal p {
+  color: white;
+}
+
+</style>
+
+How Trustworthy Is Data About Homeless People? A Los Angeles Case Study
+========================================================
+author: Jane Carlen
+date: October 15, 2018
+
+<!-- Overview: I’ll discuss various aspects of data about homeless people from collection to media reporting. This will touch on the importance of data skepticism and how to use statistical knowledge both basic and advanced to get the most out of data.
+
+#0. Introduction and my background: My first statistical project was as a summer intern in college, trying to count the number of chronically homeless people in midtown Manhattan. I was wildly under-qualified for the job, but it helped me understand the challenges surrounding data about homeless people. (5min)
+
+#1. The annual count: How the number is produced and the decisions and approximations taken to get there. Stress the importance of dissecting widely reported numbers and not just trusting them. Discuss year-to-year changes. (20 min)
+
+#2. An example (overview, not getting into too many technical details) of applying more advanced statistical methods to answer the question of how many people experience homelessness in LA over the course of a year, not just on a single night. (10 min)
+
+#3. Social inequality reflected in data and using statistical training to hold organizations accountable. Discuss the data dive we did in LA/SF with DataKind around homelessness in LA. (5 min)-->
+
+There are 53,195 homeless people in LA
+========================================================
+type: blue
+
+
+
+![Graphs don't lie](homelessness_data-figure/latimes_homelesspop.png)
+
+<font size = 5>http://www.latimes.com/local/lanow/la-me-ln-homeless-count-20180531-story.html</font>
+
+Is this a fact?
+========================================================
+type: beige
+incremental: true
+- **This number is dependent on many human decisions**
+<small>
+- Definiton of "homeless"    
+  If in a shelter? Motel (who's paying)? Couch-surfing? Hospital? Jail?
+  <!--https://endhomelessness.org/resource/changes-in-the-hud-definition-of-homeless/-->
+  <!--(1) Individual or family who lacks a fixed, regular, and adequate nighttime residence, meaning: 
+  (i)    Has a primary nighttime residence that is a public or private place not meant for human habitation; 
+  (ii)   Is living in a publicly or privately operated shelter designated to provide temporary living arrangements (including congregate shelters, transitional housing, and hotels and motels paid for by charitable organizations  or by federal, state and local government programs); 
+  or (iii)  Is exiting an institution where (s)he has resided for 90 days or less and who resided in an emergency shelter or place not meant for human habitation immediately before entering that institution 
+  https://www.lahsa.org/documents?id=1349-homeless-definition-part-1-.pdf-->
+  
+- How to count people we don't see
+
+  Tents, autos, RVs, indoors, "profiling"
+  
+- When do we gather data?
+
+  What time of year? Day or night? Snapshot or longer-term?
+<!--Annualized population-->
+
+- How do we gather the data?
+  
+  Sampling and survey design? In what setting? Who gathers data?
+</small>
+  
+Who makes up the 53,195 people ?
+========================================================
+type: beige
+incremental:true
+![alt text](homelessness_data-figure/lahsa_2018_summary.png)
+<font size = 4>https://www.lahsa.org/documents?id=2001-2018-greater-los-angeles-homeless-count-los-angeles-county.pdf</font>
+
+Sheltered (13,369) + Unshetered (39,396) = 
+
+**Wait, who makes up the 52,765?**
+
+
+========================================================
+**Agencies make mistakes**
+
+- <small> "After tallying the homeless numbers for more than 80 cities and 200 communities countywide, the agency had to adjust how many people they counted. The agency counted 52,765 homeless people, 430 fewer than originally reported."</small> <font size = 5>https://www.usabreakingnews.net/tag/homeless-number </font>
+
+- <small> Hopefully a reporter picks up on them: </small>
+![Graphs don't lie](homelessness_data-figure/latimes_whoops.png)
+<font size = 5> http://www.latimes.com/local/lanow/la-me-ln-homeless-count-correction-20180518-story.html </font>
+
+
+========================================================
+type: beige
+
+**Agencies make approximations**
+
+*From USC's 2017 metholodgy report:*
+
+<small>
+<i>
+<emph>"Note that some shelters do not report to HMIS either because they do not receive funding from LAHSA or for
+confidentiality purposes (domestic violence [DV] shelters); however, LAHSA collects count data separately from
+these shelters to include in the shelter PIT count. Therefore, the HMIS data are a total enumeration of all shelters
+that contribute to the HMIS system. **By applying the HMIS data to the non-HMIS providers and DV shelters, we
+implicitly assumed that the distribution of characteristics in the HMIS shelters were the same as those in the non-HMIS
+and DV shelters.**"</i></small>    
+
+</small>**HMIS** is the Homeless Management Information System    
+**LAHSA** is the Los Angeles Homeless Services Authority</small>
+
+<font size = 4> https://www.lahsa.org/documents?id=1645-2017-los-angeles-continuum-of-care-homeless-count-methodology-report.pdf </font>
+
+
+========================================================
+type:blue
+**Agencies change methods from year-to-year**
+
+<img src="homelessness_data-figure/tentcount_etc.png"; style="max-width:420px;float:right;">
+
+<small>
+In 2018, counted:
+- Cars (2,357) & Vans (2,183) 
+- Campers/RVs (4,577)
+- Tents (2,418)
+- Makeshift Shelters (3,451) 
+
+Extrapolated:
+- Cars (3,814) & Vans (3,554) 
+- Campers/RVs (8,380)
+- Tents (3,690)
+- Makeshift Shelters (5,785) 
+</small><br>
+
+<font size = 4> https://www.lahsa.org/documents?id=2064-2018-greater-los-angeles-homeless-count-data-summary-vehicles-tents-and-makeshift-shelters-by-geographic-area.pdf </font>
+
+========================================================
+incremental:true
+
+<img src="homelessness_data-figure/latimes_tents.png"; style="max-width:750px;">
+<small> "The average number of individuals living in each tent, for example, was fixed at 1.691 in the 2017 survey. This year it was reduced to 1.516, a difference of about one person for every five tents." </small>    
+<font size=5>  http://www.latimes.com/local/lanow/la-me-ln-homeless-count-analysis-20180711-story.html </font>
+
+- **Do agencies have an agenda?**
+
+Where can statistical techniques help?
+========================================================
+type:blue
+incremental:true
+- Measurements of uncertainty. <b>Report a range</b>.
+
+- Sampling strategy
+
+   Estimate probability of being counted.    
+   Network-based, or respondent-driven sampling?
+
+- Extrapolation    
+<img src="homelessness_data-figure/density.png"; style="max-width:680px; float:right;">
+<!--https://economicrt.org/publication/estimating-the-annual-size-of-the-homeless-population/-->
+
+Visualization
+========================================================
+type: beige
+
+https://economicrt.org/publication/data-visualization/
+
+- Helps us understand the data 
+
+- Helps compare year-to-year changes in survey results and highlight instability in data collection
+
+- For example, compare the ethnic breakdown of the 2016 and 2017 unsheltered population.
+
+Data Quality as a Social Justice Issue
+========================================================
+type:blue
+
+- Is data about homeless people lower-quality than data about other groups or things?
+
+<!--homes vs homelessness-->
+<img src="homelessness_data-figure/zillow.png"; style="max-width:950px;">
+<font size = 5>https://www.zillow.com/data-science/public-data-challenges/ </font>
+
+- If so, what does it mean? What should we do?

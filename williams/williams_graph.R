@@ -125,7 +125,9 @@ render.d3movie(williams.dynamic, usearrows = F, displaylabels = T,
                label.col = "red",
                edge.col = "gray",
                edge.lwd = "edge.lwd",
+               main = "Susan Williams Co-Author Network over Time 1977-2018)",
                bg="#ffffff", vertex.border="#333333",
-               render.par = list(show.time = TRUE, show.stats = "~edges")
-               )
+               render.par = list(show.time = TRUE, show.stats = "~edges"),
+               launchBrowser=F, filename="~/Documents/DSI/williams/williamsNet.html", 
+               d3.options = list(slider = TRUE))
             

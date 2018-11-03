@@ -131,3 +131,6 @@ render.d3movie(williams.dynamic, usearrows = F, displaylabels = T,
                launchBrowser=F, filename="~/Documents/DSI/williams/williamsNet.html", 
                d3.options = list(slider = TRUE))
             
+#remove ...
+#remove duplicate names
+

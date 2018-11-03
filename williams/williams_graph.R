@@ -5,6 +5,8 @@ library(statnet)
 library(scholar)
 library(networkDynamic)
 library(ndtv)
+library(ergm)
+library(igraph)
 
 #from Pamela
 williams.xml = readRDS("~/Documents/DSI/williams/williams_clean_endnote_data.Rds")
@@ -51,14 +53,19 @@ rownames(tmp) = williams.coauthors.unique
 williams.mat = tmp %*% t(tmp)
 
 author.codegree = williams.mat["SL Williams",]
+author.codegree2 = floor(log(author.codegree)) + 1
+
 # 2. static net ####
 
-williams.net = as.network(williams.mat, directed = F, names.eval = "edgeweight", ignore.eval = F)
+williams.net = as.network(williams.mat, directed = F, names.eval = "edge.lwd", ignore.eval = F)
 williams.net%v%"author" = williams.coauthors.unique
+williams.net%v%"vertex.cex" = author.codegree2 #how many papers with williams?
+williams.net%v%"vertex.pid" = 1:length(williams.coauthors.unique) #how many papers with williams?
+
 plot.network(williams.net, edge.col = "gray", 
              label = "vertex.names", label.cex = .5,
              label.pad = 0, label.pos = 1,
-             edge.lwd = williams.net%e%"edgeweight")
+             edge.lwd = williams.net%e%"edge.lwd")
 
 williams.igraph = intergraph::asIgraph(williams.net)
 williams.layout = data.frame(layout.fruchterman.reingold(williams.igraph))
@@ -88,39 +95,37 @@ williams.network.list = lapply(slices, function(i) {
   
   rownames(tmp) = williams.coauthors.unique[authors.sub]
   coauthor.mat = tmp %*% t(tmp)
-  coauthor.net = as.network(coauthor.mat, directed = F, names.eval = "edgeweight", ignore.eval = F)
+  coauthor.net = as.network(coauthor.mat, directed = F, names.eval = "edge.lwd", ignore.eval = F)
   coauthor.net%v%"author" = williams.coauthors.unique[authors.sub]
   coauthor.net%v%"x" = williams.layout$x[authors.sub]
   coauthor.net%v%"y" = williams.layout$y[authors.sub]
   coauthor.net%v%"vertex.pid" = which(authors.sub)
+  coauthor.net%v%"vertex.cex" = author.codegree2[authors.sub] #how many papers with williams?
   return(coauthor.net)
 })
 
 names(williams.network.list) = as.character(slices)
 
 williams.dynamic = networkDynamic(base.net=williams.net, network.list = williams.network.list,
-                                  vertex.pid = "author", create.TEAs = T, edge.TEA.names="edgeweight")
+                                  vertex.pid = "vertex.pid", create.TEAs = T)
 williams.dynamic 
+#williams.dynamic %e% "edge.lwd" = as.vector(unlist(lapply(williams.network.list, function(x) {x%e%"edge.lwd"})))
+#tmp = as.vector(unlist(lapply(williams.network.list, function(x) {x%v%"vertex.pid"})));tmp
+#tmp.a = as.vector(unlist(lapply(williams.network.list, function(x) {x%v%"author"})));tmp.a
+#head(cbind(tmp,tmp.a), 20)
 
-compute.animation(williams.dynamic, 
-                  animation.mode = "useAttribute",
+compute.animation(williams.dynamic, animation.mode = "useAttribute",
                   slice.par=list(start=0, end=length(slices), interval=1, aggregate.dur=1, rule='any'),
-                  weight.attr = c("edgeweight"))
-
+                  weight.attr = c("edge.lwd"))
 
 render.d3movie(williams.dynamic, usearrows = F, displaylabels = T,
                vertex.col = "blue",
-               vertex.tooltip = paste("<b>Name:</b>", (williams.dynamic %v% "author") ),
                label= "author",
+               vertex.cex = "vertex.cex",
                label.col = "red",
+               edge.col = "gray",
+               edge.lwd = "edge.lwd",
                bg="#ffffff", vertex.border="#333333",
                render.par = list(show.time = TRUE, show.stats = "~edges")
                )
-               
-               
-               vertex.cex = degree(net3)/2,  
-               vertex.col = net3.dyn %v% "col",
             
-              
-               launchBrowser=T, filename="Williams-Network-Dynamic.html",
-               plot.par=list(mar=c(0,0,0,0)), output.mode='inline' )

@@ -22,8 +22,8 @@ transformed data {
 
 parameters {
   vector[N1+N2] X; // risk factors
-  real<lower=0, upper=10> theta1; // parameters for Z1|X
-  real<lower=0, upper=10> theta2; // parameters for Z2|X
+  real<lower=0> theta1; // parameters for Z1|X
+  real<lower=0> theta2; // parameters for Z2|X
   real psi2;
   real phi2;
   real B0; // coefficients of outcome model

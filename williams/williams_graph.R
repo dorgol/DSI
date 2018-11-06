@@ -119,15 +119,15 @@ colnames(williams.layout) = c("x","y")
 # 3. dynamic net ####
 
 table(williams$year)
-slices = seq(1985,2018, length.out = 15)
-
+slices = seq(1983,2018, by = 1)
+start = min(slices); end = max(slices)
 author.first = sapply(williams.coauthors.unique, #flexible depending on source google scholar or pamela
   function(x) {
    min(williams[which(sapply(williams.coauthors, function(y) {x %in% y})),"year"], na.rm = T)
   })
 
 williams.network.list = lapply(slices, function(i) {
-  authors.sub = author.first < i
+  authors.sub = author.first <= i
   williams.sort = subset(williams, williams$year <= i)
   N.sub = sum(authors.sub)
   P.sub = nrow(williams.sort)
@@ -147,18 +147,16 @@ williams.network.list = lapply(slices, function(i) {
   return(coauthor.net)
 })
 
-names(williams.network.list) = as.character(slices)
+tmp = vector(mode = "list", length=min(slices)-1)
+lapply(tmp, function(x) williams.network.list[[1]])
+williams.network.list = c(tmp, williams.network.list)
 
 williams.dynamic = networkDynamic(base.net=williams.net, network.list = williams.network.list,
-                                  vertex.pid = "vertex.pid", create.TEAs = T)
+                                  vertex.pid = "vertex.pid", create.TEAs = T, start = start, end = end)
 williams.dynamic 
-#williams.dynamic %e% "edge.lwd" = as.vector(unlist(lapply(williams.network.list, function(x) {x%e%"edge.lwd"})))
-#tmp = as.vector(unlist(lapply(williams.network.list, function(x) {x%v%"vertex.pid"})));tmp
-#tmp.a = as.vector(unlist(lapply(williams.network.list, function(x) {x%v%"author"})));tmp.a
-#head(cbind(tmp,tmp.a), 20)
 
 compute.animation(williams.dynamic, animation.mode = "useAttribute",
-                  slice.par=list(start=0, end=length(slices), interval=1, aggregate.dur=1, rule='any'),
+                  slice.par=list(start=start, end=end, interval=1, aggregate.dur=1, rule='any'),
                   weight.attr = c("edge.lwd"))
 
 render.d3movie(williams.dynamic, usearrows = F, displaylabels = T,
@@ -174,7 +172,7 @@ render.d3movie(williams.dynamic, usearrows = F, displaylabels = T,
                xlab = "test",
                bg="lightgreen",
                vertex.border="#333333",
-               render.par = list(show.time = FALSE, show.stats = "~edges"),
+               render.par = list(show.time = TRUE, show.stats = "~edges"),
                #launchBrowser=F, filename="~/Documents/DSI/williams/williamsNet.html", 
                d3.options = list(slider = TRUE))
             

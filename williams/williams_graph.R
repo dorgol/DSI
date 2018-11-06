@@ -156,7 +156,7 @@ williams.dynamic = networkDynamic(base.net=williams.net, network.list = williams
 williams.dynamic 
 
 compute.animation(williams.dynamic, animation.mode = "useAttribute",
-                  slice.par=list(start=start, end=end, interval=1, aggregate.dur=1, rule='any'),
+                  slice.par=list(start=start, end=end, interval=2, aggregate.dur = 2, rule='latest'),
                   weight.attr = c("edge.lwd"))
 
 render.d3movie(williams.dynamic, usearrows = F, displaylabels = T,
@@ -173,7 +173,7 @@ render.d3movie(williams.dynamic, usearrows = F, displaylabels = T,
                bg="lightgreen",
                vertex.border="#333333",
                render.par = list(show.time = TRUE, show.stats = "~edges"),
-               #launchBrowser=F, filename="~/Documents/DSI/williams/williamsNet.html", 
+               launchBrowser=F, filename="~/Documents/DSI/williams/williamsNet.html", 
                d3.options = list(slider = TRUE))
             
 #remove ...

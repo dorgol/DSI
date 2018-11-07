@@ -38,6 +38,7 @@ names(williams)[2] =  c("author")
 #fixes 
 williams$author[49][[1]] = c("Wright, J. T.", "Williams, S. L.", "Dethier, Megan")
 williams$author[34][[1]][1] = "Reusch, T. B. H"
+williams$author[103][[1]][8] = "Miller, A."
 williams.coauthors = williams$author
 williams.coauthors = lapply(williams.coauthors, function(x) {
   str_replace(x, pattern = ".*[w|W]illiams.*", replacement = "Williams, S. L.")
@@ -166,16 +167,13 @@ render.d3movie(williams.dynamic, usearrows = F, displaylabels = T,
                vertex.tooltip=paste(williams.net%v%'author', williams.net%v%'student', sep = "<br>"),
                label.col = "black",
                label.cex = .7,
-               edge.col = "lightgreen",
+               edge.col = "#cfddc5",
                edge.lwd = "edge.lwd",
                main = "Susan Williams Co-Author Network over Time: 1983-2018",
                xlab = "test",
-               bg="lightgreen",
+               bg="#cfddc5",
                vertex.border="#333333",
                render.par = list(show.time = TRUE, show.stats = "~edges"),
                launchBrowser=F, filename="~/Documents/DSI/williams/williamsNet.html", 
                d3.options = list(slider = TRUE))
-            
-#remove ...
-#remove duplicate names
 

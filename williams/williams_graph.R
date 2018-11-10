@@ -95,6 +95,7 @@ student[williams.coauthors.unique %in% williams.ms.students] = "MS Student" #MS
 
 # 2. static net ####
 
+#set.seed(3) there is randomness in the layouts
 williams.net = as.network(williams.mat, directed = F, names.eval = "edge.lwd", ignore.eval = F)
 williams.net%v%"author" = williams.coauthors.unique
 williams.net%v%"vertex.cex" = author.codegree2 #how many papers with williams?

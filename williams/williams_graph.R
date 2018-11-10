@@ -73,8 +73,8 @@ tmp = matrix(do.call(cbind, williams.edges), nrow = N, ncol = P)
 rownames(tmp) = williams.coauthors.unique
 williams.mat = tmp %*% t(tmp)
 
-author.codegree = williams.mat["Williams, S. L.",]
-author.codegree2 = floor(log(author.codegree)) + 1
+author.codegree = williams.mat["Williams, S.",]
+author.codegree2 = log(author.codegree) + .5
 
 # students
 williams.ms.students = c("Yarish, S.", "Lu, T.", "Di Fiori, R.", "Davis, C.", "Ewanchuk, P.", 
@@ -149,11 +149,11 @@ williams.network.list = lapply(slices, function(i) {
 })
 
 tmp = vector(mode = "list", length=min(slices)-1)
-lapply(tmp, function(x) williams.network.list[[1]])
+tmp = lapply(tmp, function(x) williams.network.list[[1]])
 williams.network.list = c(tmp, williams.network.list)
 
 williams.dynamic = networkDynamic(base.net=williams.net, network.list = williams.network.list,
-                                  vertex.pid = "vertex.pid", create.TEAs = T, start = start, end = end)
+                                  vertex.pid = "vertex.pid", create.TEAs = T)
 williams.dynamic 
 
 compute.animation(williams.dynamic, animation.mode = "useAttribute",
@@ -174,6 +174,6 @@ render.d3movie(williams.dynamic, usearrows = F, displaylabels = T,
                bg="#cfddc5",
                vertex.border="#333333",
                render.par = list(show.time = TRUE, show.stats = "~edges"),
-               launchBrowser=F, filename="~/Documents/DSI/williams/williamsNet.html", 
+               #launchBrowser=F, filename="~/Documents/DSI/williams/williamsNet.html", 
                d3.options = list(slider = TRUE))
 

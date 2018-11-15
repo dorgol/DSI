@@ -1,0 +1,613 @@
+---
+title: "Network analysis in R"
+output:
+  html_document:
+    df_print: paged
+---
+
+## 0. Overview 
+
+There are many packages in R for network analysis.
+
+Packages grew up around modeling/analysis frameworks with core authors.
+
+Tutorial is organized by package + case study + exercise.
+
+Covers major packages, biased to my experience.
+
+Analysis packages:
+
+- statnet (ergm & tergm, hergm, xergm, Epimodel)
+- igraph
+- latentnet
+
+Visualization packages:
+
+- networkDynamic
+- visNetwork
+- gg*
+
+### A. Setup 
+```{r setup, cache = T, warning = F, message = F}
+
+# listing major packages once here so you can make sure they're installed
+library(dplyr)
+library(statnet)
+library(lubridate)
+library(igraph)
+# Most are listed again where first used
+
+# Working directory - upate for your system
+wd = "~/Documents/DSI/network_analysis_in_R/"
+```
+
+------------------------------------------------------------------------------------------------
+
+### B. Some terminology (more to come)
+
+- Nodes (or Vertices), Edges
+- *Binary* networks (0,1 edges)
+- *Valued* networks or *signed* networks
+- *Directed* (i->j is not the same edge as j->i)
+    + transportation, one-way streets
+- *Undirected*
+    + friendships
+- Dyad is set of two nodes and a single edge if undirected, two edges if directed
+- *Bipartite*
+    + heterosexual sexual relationships
+- Adjacency matrix - Matrix representation of a network. N x N.
+    + Symmetric if network is undirected
+- Edge list - List representation; start and end of all edges.
+    + Efficient if network is sparse
+
+------------------------------------------------------------------------------------------
+
+# 1. Statnet 
+
+A family of packages for all stages of network analysis based in exponential random graph models (ERGM).
+
+`statnet` (version 2018.10): Depends:	`R` (≥ 3.0), `tergm` (≥ 3.5.2), `ergm.count` (≥ 3.3), `sna` (≥ 2.4), `tsna` (≥ 0.2)
+Imports:	`ergm` (≥ 3.9.4), `network` (≥ 1.13), `networkDynamic` (≥ 0.9), `statnet.common` (≥ 4.1.4)
+
+Authors Handcock, Hunter, Butts, Goodreau, Krivitsky, Bender-deMoll, Morris, M.
+Roots in social networks, sociology, epidemiology
+
+Exponential Random Graph Model
+
+$$ P(Y) = \frac{exp(t_1b_1 + t_2_b_2+...+t_pb_p}{C(X,N)} $$
+
+- Maximum entropy distribution on graph space
+- Simple to express, may be hard to implement
+
+- SO many graphs -> C is intractible $O(2^{n^2})$ for binary networks
+- MPLE or MCMC-MLE for inference. Explore the parameter space and find optimal values.
+- DEGENERACY
+
+ERGM are generally best-suited for smaller networks with interesting attributes that we want to explore in relation to the network structure.
+
+## Example: Supreme Court Decisions about First Amendment
+
+Providers of this data interested in :
+
+- Patterns of homophily, especially if the justice characteristics are associated with justices deciding in the similar way, e.g. 
+    + gender
+    + age
+    + religion
+
+We'll want to control for characteristics like party of appointing president. 
+
+Data starts in 1994 because that is the first year with more than one female Supreme Court justice.
+
+<center>![RBG](/Users/janecarlen/Documents/DSI/network_analysis_in_R/rbg.jpg)</center>
+
+## A) Convert raw data to a network object 
+
+Common that our data starts as one or more csv files. Edges and node attributes may be seperate.
+We need to convert this to network data.
+
+### Load and inspect data
+
+We will discover that this is a bipartite network.
+
+The data includes detailed opinion information which is captured by the "Target" number and "Opinion.information" variable. At least for visualization let's condense this slightly to just the Main, Concurrence, Dissent etc. labels contained in the "Type" variable. We will do this by grouping the Target by Type.
+
+```{r supreme_court_load, echo = T, cache = T, warning = F, message = F}
+
+sc.edges = read.csv(paste(wd, "GSoCversionOpinions-EDGES.csv", sep = "") )
+sc.nodes = read.csv(paste(wd, "GSoCversionOpinions-NODES.csv", sep = ""))
+summary(sc.edges)
+summary(sc.nodes)
+
+#list unique case names and dates
+caseinfo = sc.edges %>% group_by(Case.name) %>% summarize(date = first(Case.date))
+head(caseinfo, 10)
+
+#list unique decisions names and dates
+sc.edges.condensed = sc.edges %>% group_by(Source, Case.name, Type) %>% summarize(year = first(Case.date))
+sc.edges.condensed$ID = sc.edges.condensed %>% group_by(Case.name, Type) %>% group_indices()
+head(sc.edges.condensed, 10)
+```
+
+### Convert to network data using statnet
+
+How do we create a unimodal network from a bipartite one?
+
+```{r supreme_court_network_bipartite, echo = T, cache = T, warning = F, message = F}
+
+library(statnet) # loads statnet, tsna, sna, ergm.count, statnet.common, tergm, networkDynamic, ergm, network
+
+n.judges = 14
+n.decisions = max(sc.edges.condensed$ID)
+
+sc.bipartite = network(sc.edges.condensed[,c("Source", "ID")], bipartite = n.judges,
+                       vertex.attr = list(vertex.type = c(rep(2,n.judges), rep(1, n.decisions)), 
+                                          year = c(rep(2,n.judges), gray(1 - (sc.edges.condensed$year - 1994)/23)),
+                                          name = c(rep(2,n.judges), sc.edges.condensed$Case.name),
+                                          label = c(as.character(sc.nodes$Label), rep("", n.decisions)),
+                                          decision.type = c(rep(1,n.judges), as.numeric(sc.edges.condensed$Type))))
+
+#dev.new()
+plot(sc.bipartite,
+     vertex.sides = 2+(as.numeric(sc.bipartite%v%"vertex.type"))^4,
+     vertex.cex = sc.bipartite%v%"vertex.type", 
+     vertex.col = sc.bipartite%v%"decision.type", #sc.bipartite%v%"year",
+     label = sc.bipartite%v%"label",
+     main = "Bipartite Network of 1st Amendment Supreme Court Decisions 1994-2017", edge.col = "gray",
+     label.col = 4, label.cex = 1.2, label.pos = 3)
+
+legend("topleft", legend = c("Judge", "Decision"), col = 1, pch = c(19,2), cex = 1.2)
+legend("bottomleft", legend = levels(sc.edges.condensed$Type)[-1], col = 2:5, pch = 17)
+```
+
+### Convert to unimodal network
+
+<center>![genius?](/Users/janecarlen/Documents/DSI/network_analysis_in_R/goodwill_question.jpg)</center>
+
+```{r supreme_court_network_unimode, echo = T, cache = T, warning = F, message = F}
+
+library(lubridate)
+
+sc.projection = (as.sociomatrix(sc.bipartite) %*% t(as.sociomatrix(sc.bipartite)))[1:n.judges,1:n.judges]
+
+# slight discrepancy between appearance of judges in edgelist and this projection due to=
+# duplicate edges being listed when a decision was split in two (e.g. "part" and "rest")
+
+sc.nodes$birthyear = year(as.Date(as.character(sc.nodes$Date.of.birth), format = "%m/%d/%Y"))
+
+sc.attr.list = list(label = c(as.character(sc.nodes$Label)),
+                          appointed = as.numeric(sc.nodes$Appointing.President[1:n.judges]),
+                          appearances = diag(sc.projection),
+                          religion = as.character(sc.nodes$Religion..broad.[1:n.judges]),
+                          gender = as.character(sc.nodes$Gender[1:n.judges]),
+                          role = as.character(sc.nodes$Role[1:n.judges]))
+
+sc.unimode = network(sc.projection, directed = F, names.eval = "codecisions", ignore.eval = F,
+                        vertex.attr = sc.attr.list)
+                     
+
+religion.pch = 2 + as.numeric(as.factor(sc.unimode%v%"religion")); religion.pch[religion.pch>4] = 50
+
+plot(sc.unimode, edge.lwd = "codecisions",
+     vertex.col = 2*(-1*sc.unimode%v%"appointed"+4), 
+     vertex.cex = sc.unimode%v%"appearances"/15,
+     vertex.sides = religion.pch,
+     edge.col = "gray",
+     label = sc.unimode%v%"label",
+     main = "Connections of Judges in 1st Amendment Decisions")
+
+legend("topleft", legend = c("Dem. Appoint", "Rep. Appoint"), col = c(4,2), pch = 19, cex = 1)
+legend("bottomleft", legend = levels(as.factor(sc.unimode%v%"religion")), col = 1, pch = c(17,18,19))
+
+```
+
+#### Why model? 
+
+- We can use the visualization to learn some things about the network, but there's a limit on the number of things we can visualize at one time.
+
+- Statnet has a few layout options, which can change how we see the network.
+
+```{r layout modes, cache = T, eval = T, echo = F, fig.width = 8}
+
+par(mfrow = c(1,3))
+par(mai = rep(.2,4))
+
+set.seed(1)
+
+plot(sc.unimode, edge.lwd = "codecisions",
+     vertex.col = 2*(-1*sc.unimode%v%"appointed"+4), 
+     vertex.cex = sc.unimode%v%"appearances"/15,
+     vertex.sides = religion.pch,
+     edge.col = "gray",
+     label = sc.unimode%v%"label",
+     main = "Fruchterman Reingold",
+     mode = "fruchtermanreingold")
+
+plot(sc.unimode, edge.lwd = "codecisions",
+     vertex.col = 2*(-1*sc.unimode%v%"appointed"+4), 
+     vertex.cex = sc.unimode%v%"appearances"/15,
+     vertex.sides = religion.pch,
+     edge.col = "gray",
+     label = sc.unimode%v%"label",
+     main = "Circle layout",
+     mode = "circle")
+
+plot(sc.unimode, edge.lwd = "codecisions",
+     vertex.col = 2*(-1*sc.unimode%v%"appointed"+4), 
+     vertex.cex = sc.unimode%v%"appearances"/15,
+     vertex.sides = religion.pch,
+     edge.col = "gray",
+     label = sc.unimode%v%"label",
+     main = "Kamada-Kawai",
+     mode = "kamadakawai")
+```
+
+- PLOTTING HAS RANDOMNESS. We use `set.seed` to fix a location, but note that randomness can impact interpretation.
+
+- Note how centrality and politics (liberal vs. conservative) affect the layout.
+
+- We want to analyze the effects of some factors while controlling for others.
+
+- We'll use the unimodal network for modelling. It's small, gets at our questions of interest, and is relatively easy to interpret.
+
+## B) Fit ERGM variations
+
+```{r supreme_court_network_ergm, echo = T, cache = T, warning = F, message = F}
+
+#?ergm.terms
+
+sc.unimode%v%"birthyear" = sc.nodes$birthyear[1:n.judges]
+sc.ergm = ergm(sc.unimode ~ edges + nodematch("gender") + nodematch("religion") +
+                 nodematch("appointed") + nodecov("birthyear") + absdiff("birthyear") + 
+                 nodefactor("role"))
+
+summary(sc.ergm)
+
+summary.statistics(sc.unimode ~ density())
+
+# What is the relationship between birth year and degree in the network?
+# Not a super strong though noticeable at the tails
+plot(sc.unimode%v%"birthyear", degree(sc.unimode))
+(sc.unimode%v%"label")[order(sc.unimode%v%"birthyear")]
+```
+
+
+A density of about 80% high is very high for a social network. In our current network, two judges are connected if they share any decision. This may be masking differences between them. Also our results our skewed by how much judges overlapped in their appointments.
+
+Let's try normalizing and thinning the network using a percentage-wise cutoff for edges to be included. This is a common strategy, but we should apply it carefully because it affects our model. Ideally we would use a cutoff that is meaningful in context.
+
+```{r supreme_court_network_thin_ergm, echo = T, cache = T, warning = F, message = F}
+
+# try thinning
+
+sc.projection.norm = sc.projection
+diag(sc.projection.norm) = 0
+sc.projection.norm = sc.projection.norm/rowSums(sc.projection.norm)
+hist(sc.projection.norm, breaks = 40)
+sc.projection.norm[sc.projection.norm < .1] = 0
+
+sc.unimode.thin = network(sc.projection.norm, directed = F, vertex.attr = sc.attr.list)
+sc.unimode.thin%v%"birthyear" = sc.nodes$birthyear[1:n.judges]
+
+plot(sc.unimode.thin, 
+     vertex.col = 2*(-1*sc.unimode%v%"appointed"+4), 
+     vertex.cex = sc.unimode%v%"appearances"/15,
+     #vertex.sides = religion.pch,
+     edge.col = "gray",
+     label = sc.unimode%v%"label",
+     main = "Network of 1st Amendment Decisions")
+
+sc.ergm.thin = ergm(sc.unimode.thin ~ edges + 
+                      nodematch("gender") + 
+                      nodematch("religion") +
+                      nodematch("appointed") + 
+                      nodecov("birthyear") +
+                      absdiff("birthyear") + 
+                      nodefactor("role")
+                    )
+summary(sc.ergm.thin)
+
+sc.ergm.thin = ergm(sc.unimode.thin ~ edges + 
+                      #nodematch("gender") + 
+                      nodematch("religion") +
+                      nodematch("appointed") + 
+                      nodecov("birthyear") + 
+                      absdiff("birthyear")
+                      #nodefactor("role")
+                    )
+
+summary(sc.ergm.thin)
+```
+
+## C) Evaluate ERGM fit
+
+How can we tell if the fit is good?
+
+```{r supreme_court_network_ergm_gof, echo = T, cache = T, warning = F, message = F, fig.width = 8}
+
+# Use gof
+sc.ergm.thin.gof = gof(sc.ergm.thin)
+plot(sc.ergm.thin.gof)
+
+# Inspect simulations 
+summary.statistics(sc.unimode.thin ~ triangles())
+summary.statistics(simulate(sc.ergm.thin) ~ triangles())
+
+# Compare simulated to true
+par(mfrow = c(1,2))
+par(mai = rep(.2, 4))
+
+plot(sc.unimode.thin, 
+     vertex.col = 2*(-1*sc.unimode%v%"appointed"+4), 
+     vertex.cex = sc.unimode%v%"appearances"/15,
+     #vertex.sides = religion.pch,
+     edge.col = "gray",
+     label = sc.unimode%v%"label",
+     main = "Network of 1st Amendment Decisions", label.cex = .5)
+
+
+plot(simulate(sc.ergm.thin), 
+     vertex.col = 2*(-1*sc.unimode%v%"appointed"+4), 
+     vertex.cex = sc.unimode%v%"appearances"/15,
+     #vertex.sides = religion.pch,
+     edge.col = "gray",
+     label = sc.unimode%v%"label",
+     main = "Simulation from model", label.cex = .5)
+
+
+```
+
+Why is this fitting so quickly?
+
+```{r supreme_court_network_ergm_gw, echo = T, cache = T, warning = F, message = F}
+
+# For MCMC
+sc.ergm.thin.mle = ergm(sc.unimode.thin ~ edges + 
+                      nodematch("religion") +
+                      nodematch("appointed") + 
+                      nodecov("birthyear") + 
+                      absdiff("birthyear"),
+                      estimate = "MLE", control = control.ergm("force.main" = TRUE))
+
+plot(sc.ergm.thin.mle)
+# same as mcmc.diagnostics(sc.ergm.thin.mle)
+
+# Dependent terms always force MCMC
+sc.ergm.thin.gw = ergm(sc.unimode.thin ~ edges + 
+                      nodematch("religion") +
+                      nodematch("appointed") + 
+                      nodecov("birthyear") + 
+                      absdiff("birthyear") +
+                      #gwesp(.5, fixed = T) + 
+                      gwdegree(.5, fixed = T)
+                    )
+
+summary(sc.ergm.thin.gw)
+plot(sc.ergm.thin.gw)
+sc.ergm.thin.gw.gof = gof(sc.ergm.thin.gw)
+plot(sc.ergm.thin.gw.gof)
+
+
+# Compare simulated to true
+par(mfrow = c(1,2))
+
+plot(sc.unimode.thin, 
+     vertex.col = 2*(-1*sc.unimode%v%"appointed"+4), 
+     vertex.cex = sc.unimode%v%"appearances"/15,
+     #vertex.sides = religion.pch,
+     edge.col = "gray",
+     label = sc.unimode%v%"label",
+     main = "Connections of Judges in 1st Amendment Decisions")
+
+
+plot(simulate(sc.ergm.thin.gw), 
+     vertex.col = 2*(-1*sc.unimode%v%"appointed"+4), 
+     vertex.cex = sc.unimode%v%"appearances"/15,
+     #vertex.sides = religion.pch,
+     edge.col = "gray",
+     label = sc.unimode%v%"label",
+     main = "Simulation from model")
+```
+
+We could try to add a `triangles` term to the model formula but the fit will fail due to model degeneracy.
+You'll see some kind of error message, e.g. "MCMLE estimation stuck. There may be excessive correlation between model terms, suggesting a poor model for the observed data."
+
+```{r supreme_court_network_ergm_tri, eval = F, echo = T, cache = T}
+
+sc.ergm.gw = ergm(sc.unimode.thin ~ edges + 
+                      nodematch("religion") +
+                      nodematch("appointed") + 
+                      nodecov("birthyear") + 
+                      absdiff("birthyear") +
+                      triangles)
+
+```
+
+## D) Something to try
+
+- Upload _ data and convert to a network
+- Make a plot with vertices colored by _
+- Fit an ergm with terms for _
+
+# 2. igraph and VisNetwork
+
+Lots of descriptive statistics and some models too. Many community detection algorithms. Many layout options.
+
+Author: Gabor Csardi (background in computer science, biophysics, statistics)
+
+PageRank model?
+Modularity maximization?
+
+# Example: Network of Journal-to-journal Citations
+
+Analyzing a network of statistics journals where connections described how much one journal cites another.
+
+Data used is in supplementatry material from a paper available here: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4755202/
+In this case we don't have any features about the journals outside the citation counts.
+
+We may be interested in:
+
+- Which journals are most important?
+- Which journals are most central in the network?
+- Are there sub-communities of journals?
+- Other features of the network such as reciprocity
+- Visualization of the network
+
+
+## A) Convert raw data to a network object
+
+Our network comes in the form of a valued adjacency matrix.
+
+We should retain the information from valued edges wherever possible. 
+
+```{r journals_load, eval = T, cache = T, echo = T, warning = F, message = F}
+
+library(igraph)
+
+Cmatrix <- as.matrix(read.csv(paste(wd, "RSSA-179-1-s001/Data/cross-citation-matrix.csv", sep = ""), row.names = 1)) #47 x 47
+Cmatrix.diag = Cmatrix #store a copy before removing diag
+diag(Cmatrix) = rep(0,47)
+#Self-citations are removed: The highest raw counts are from self-citations of CSDA (486) and StMed (628), which would seem to skew any analysis of importance. 
+
+#Note the use of the tranposed Cmatrix in the next line to correspond to standard i,j entry = citation FROM i to j. Original Cmatrix has i,j indicates citation from j to i.
+
+Cgraph = graph_from_adjacency_matrix(Cmatrix, mode = "directed", weighted = "citations")
+```
+
+`igraph` has many more layout options than `statnet`. You can use the `intergraph` package to easily convert back and forth (primarily the functions `asIgraph` and `asNetwork`).
+
+```{r journals_plot, eval = T, cache = T, echo = T, warning = F, message = F, fig.width = 8, fig.keep = "first"}
+
+par(mfrow = c(3,3))
+par(mai = rep(.2, 4))
+
+mark.size = .1
+
+plot(Cgraph, mark.shape = mark.size, layout = layout.grid, main = "layout.grid")
+plot(Cgraph, mark.shape = mark.size, layout = layout.circle, main = "layout.cirlce")
+plot(Cgraph, mark.shape = mark.size, layout = layout.davidson.harel, main = "layout.davidson.harel")
+plot(Cgraph, mark.shape = mark.size, layout = layout.graphopt, main = "layout.graphopt")
+plot(Cgraph, mark.shape = mark.size, layout = layout.star, main = "layout.star")
+plot(Cgraph, mark.shape = mark.size, layout = layout.gem, main = "layout.gem")
+plot(Cgraph, mark.shape = mark.size, layout = layout_nicely, main = "layout_nicely")
+plot(Cgraph, mark.shape = mark.size, layout = layout.auto, main = "layout.fruchterman.reingold")
+#Another way to change the layout
+Cgraph <- set_graph_attr(Cgraph, "layout", layout_with_kk(Cgraph))
+plot(Cgraph, main = "layout_with_kk")
+
+par(mfrow = c(1,1))
+
+# Producting/extracting layout coordinates
+l = igraph::layout_on_grid(Cgraph)
+plot(Cgraph, layout = l)
+
+```
+
+```{r journals_statnet, eval = F, cache = T, echo = T, warning = F, message = F}
+
+# If we were using network package: ####
+Cnet = as.network(t(Cmatrix), directed=T, matrix.type="a", ignore.eval=F,  
+       names.eval="citations") #as valued net, see \cite{krivitsky2015}
+
+#as a binary network
+Cbinet <- as.network(t(Cmatrix))
+
+#cited/citing
+cited = rowSums(Cmatrix) #citations in
+citing = colSums(Cmatrix) #citations out
+cite.ratio = cited/citing
+
+#normalized
+Cmatrix.norm = t(Cmatrix)/citing #entries are % of i's citations to j (column)
+Cnet.norm = as.network(Cmatrix.norm, directed=T, matrix.type="a", ignore.eval=F,
+            names.eval="citations")
+```
+
+```{r setup_jrss, eval = F, cache = F, echo = F, results='hide', warning=F, echo = F, message=F, dependson = "setup"}
+#code from JRSS-PR-SA-Dec-13-0008_supplement.R to the paper
+journal.abbr <- rownames(Cmatrix)
+
+Tmatrix <- Cmatrix + t(Cmatrix)
+diag(Tmatrix) <- diag(Cmatrix.diag)
+
+journals.cluster <- hclust(d = as.dist(1 - cor(Tmatrix)))
+#plot(journals.cluster, sub = "", xlab = "")
+#cutree(journals.cluster, h = 0.6)  
+library(BradleyTerry2)
+
+Cdata <- countsToBinomial(Cmatrix)
+fit <- BTm(outcome = cbind(win1, win2), player1 = player1, player2 = player2, data = Cdata)
+
+npairs <- NROW(Cdata)
+njournals <- nlevels(Cdata$player1)
+phi <- sum(residuals(fit, "pearson")^2) / (npairs - (njournals - 1))
+
+## 3.1 Journal residuals
+journal.res <- rep(NA, njournals)
+res <- residuals(fit, type = "pearson")
+coefs <- c(0, coef(fit)) # 0 is the coefficient of the first journal
+for(i in 1:njournals){
+    A <- which(Cdata$player1 == journal.abbr[i])
+    B <- which(Cdata$player2 == journal.abbr[i])
+    y <- c(res[A], -res[B])
+    x <- c(-coefs[Cdata$player2[A]], -coefs[Cdata$player1[B]])
+    journal.res[i] <- sum(y * x) / sqrt(phi * sum(x ^ 2))
+}
+names(journal.res) <- journal.abbr
+
+library(qvcalc)
+cov.matrix <- matrix(0, nrow = njournals, ncol = njournals)
+cov.matrix[-1, -1] <- vcov(fit)
+qse <- qvcalc(phi * cov.matrix, estimates = c(0, coef(fit)),
+              labels = journal.abbr)
+#qse[["covmat"]] = cov.matrix*phi
+
+export.scores <- qse$qvframe$estimate
+export.scores <- export.scores - mean(export.scores)
+names(export.scores) <- journal.abbr
+
+sort.id <- sort(export.scores, decreasing = TRUE, index.return = TRUE)$ix
+fit.table <- data.frame(quasi = export.scores[sort.id], qse = qse$qvframe$quasiSE[sort.id])
+rownames(fit.table)
+rownames(fit.table)[c(1,6,20)] = c("JRSS-B", "JRSS-A", "JRSS-C")
+match(rownames(fit.table),Cnet%v%"vertex.names")
+fit.table2 = fit.table[order(match(rownames(fit.table),Cnet%v%"vertex.names")),]
+```
+
+ 
+# 3. Latentnet
+ 
+ My favorite : )
+ 
+- Unobserved (social) space
+- "Enough" parameters to describe the behavior (no degeneracy)
+- Latent space network models produce model-based visualizations.
+
+# 4. Additional sofware:
+
+- `DynamicNetwork`
+ 
+Use a co-author network to illustrate?
+ 
+```{r scholar, eval = F}
+library(scholar)
+get the citations from package authors:
+statnet
+igraph: Gábor Csárdi
+visNetwork
+latentnet
+
+get_coauthors("392xmm8AAAAJ&hl=en") #handcock
+get_coauthors("XnFQmY8AAAAJ&hl=en") #csardi
+get_coauthors("-VGAs1cAAAAJ&hl=en") #butts
+get_publications("-VGAs1cAAAAJ&hl=en") #butts
+get_publications("XnFQmY8AAAAJ&hl=en") #martina morris not on google scholar
+get_citation_history("-VGAs1cAAAAJ&hl=en")
+get_article_cite_history("-VGAs1cAAAAJ&hl=en", "2osOgNQ5qMEC") #??
+plot_coauthors(get_coauthors("-VGAs1cAAAAJ&hl=en") ) #not great, we can do better
+```
+ 
+- fastnet
+- netcoin
+
+
+ 

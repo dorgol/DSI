@@ -39,6 +39,8 @@ names(williams)[2] =  c("author")
 williams$author[49][[1]] = c("Wright, J. T.", "Williams, S. L.", "Dethier, Megan")
 williams$author[34][[1]][1] = "Reusch, T. B. H"
 williams$author[103][[1]][8] = "Miller, A."
+williams$author[54][[1]][2] = "Hughes, A."
+
 williams.coauthors = williams$author
 williams.coauthors = lapply(williams.coauthors, function(x) {
   str_replace(x, pattern = ".*[w|W]illiams.*", replacement = "Williams, S. L.")
@@ -175,6 +177,6 @@ render.d3movie(williams.dynamic, usearrows = F, displaylabels = T,
                bg="#cfddc5",
                vertex.border="#333333",
                render.par = list(show.time = TRUE, show.stats = "~edges"),
-               #launchBrowser=F, filename="~/Documents/DSI/williams/williamsNet.html", 
+               launchBrowser=F, filename="~/Documents/DSI/williams/williamsNet.html", 
                d3.options = list(slider = TRUE))
 

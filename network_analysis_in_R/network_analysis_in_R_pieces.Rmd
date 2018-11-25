@@ -629,5 +629,7 @@ render.d3movie(butts.dynamic, usearrows = F, displaylabels = T,
 
 ```
 
-- fastnet
+## More resources
 
+- https://github.com/briatte/awesome-network-analysis
+- "Network" by M.E.J. Newman. Chapter 7 "Measures and Metrics" overlaps most with the underlying material of this tutorial (but doesn't discuss code) (@newman10). 

@@ -98,7 +98,9 @@ identical(Cgraph.weights, get.edge.attribute(Cgraph.bin, "citations"))
 
 ## B) Visualize {#visualize}
 
-`igraph` has many more layout options than `statnet`. You can use the `intergraph` package to easily convert back and forth (primarily the functions `asIgraph` and `asNetwork`).
+`igraph` has many more layout options than `statnet`. You can use the `intergraph` (@intergraph15) package to easily convert network back and forth between the two packages (primarily the functions `asIgraph` and `asNetwork`) .
+
+We can tailor the layout to our purposes, which may be visibility of nodes, visualization of clusters, or visibility of relationships. 
 
 ```{r journals_plot, eval = T, cache = T, echo = T, warning = F, message = F, fig.height = 12, fig.width = 10, fig.keep = "first", dependson = c("journals_load")}
 
@@ -128,19 +130,57 @@ plot(Cgraph, edge.arrow.size = arrow.size, edge.arrow.width = arrow.size, edge.w
      layout = layout.auto, main = "layout.fruchterman.reingold")
 plot(Cgraph, edge.arrow.size = arrow.size, edge.arrow.width = arrow.size, edge.width = edge.width,
      layout = layout.gem, main = "layout.gem")
+```
+
+
+**Other ways to change the plot layour or supply a custom layout**
+
+```{r journals_plot2, eval = T, cache = T, echo = T, warning = F, message = F, fig.keep = "none", dependson = c("journals_load")}
 
 # Another way to change the layout
-Cgraph <- set_graph_attr(Cgraph, "layout", layout_with_kk(Cgraph))
-par(mfrow = c(1,1))
-plot(Cgraph, main = "layout_with_kk", edge.arrow.size = arrow.size, edge.arrow.width = arrow.size, edge.width = edge.width)
+Cgraph <- set_graph_attr(Cgraph, "layout", layout_with_kk(Cgraph)) #then plotting defaults to this layout
 
 # Producting/extracting layout coordinates
 l = igraph::layout_on_grid(Cgraph)
 plot(Cgraph, layout = l)
+```
+
+Of course we can also change the color, size and other attributes of the vertices and edges. Vertex attributes begin with `vertex.` and edge attributes begin with `edge.`.
+
+```{r journals_plot3, eval = T, cache = T, echo = T, warning = F, message = F, fig.height = 8, fig.width = 8, fig.keep = "first", dependson = c("journals_load")}
+
+plot(Cgraph, layout = layout.mds, vertex.size = colSums(Cmatrix)/100,
+     vertex.color  = "skyblue", vertex.shape = "csquare", vertex.frame.color = "white",
+     vertex.label.cex = .5, vertex.label.color = "black", vertex.label.family = "mono",
+     edge.width = Cgraph.weights/20, edge.color = "orange", edge.curved = .5, edge.arrow.size = .3,
+     margin = 0, main = "Playing with plot settings")
 
 ```
 
-We can tailor the layout to our purposes, which may be visibility of nodes, visualization of clusters, or visibility of relationships. 
+We could do this in a `ggplot` family package to easily force those central nodes apart (@graph18)
+
+```{r journals_ggplot, eval = T, cache = T, fig.width = 8, warning = F, message = F}
+
+library(ggraph)
+library(ggrepel)
+
+ggraph(Cgraph, 'igraph', algorithm = 'mds') +
+  geom_edge_link(colour = "yellow2", alpha = 0.8, show.legend = F) + 
+  geom_node_point(size = 2, color = "blue") + 
+  geom_node_label(aes(label = name), color = "blue", repel = TRUE, label.padding = .15) + 
+  ggtitle("ggraph version of the plot using ggrepel") + theme_void()
+
+```
+
+What about `ggnet`, `ggnet2` and `ggnetwork`? 
+
+- `ggnet` and `ggnet2` are network plotting fucntions. "ggnet2 is an improved version of ggnet." Both have been folded into the GGally package. (https://briatte.github.io/ggnet/)
+
+- `ggnetwork` is from the same author as `ggnet` and `ggnet2`, 	Francois Briatte, but is not actively maintained, while `ggraph` is.
+
+> It seems we have coded more or less the same thing: https://github.com/briatte/ggnetwork ... but your project goes further than mine... Also, my ggnetwork package was written as a proof-of-concept: unless I need to submit it for CRAN to get the paper published, I won't submit it and just leave it on GitHub, so feel free to take everything you need from it for your own package, if there is anything useful in there for you!" - Francois Briatte.
+
+https://github.com/thomasp85/ggraph/issues/3
 
 ```{r journals_statnet, eval = F, cache = T, echo = F, warning = F, message = F}
 
@@ -162,35 +202,170 @@ Cnet.norm = as.network(Cmatrix.norm, directed=T, matrix.type="a", ignore.eval=F,
             names.eval="citations")
 ```
 
+The plot above uses a multidimenstional scaling layout which attempts to preserve in two dimensions some type of distance calculated between nodes in the graph, e.g. the shortest path distance. From this layout we see some clusters in the plot. We also see that the most of journals with high numbers of citations, calculated by `colSums(Cmatrix)` are generally near the middle. This leads us to our next question?
+
 ### C) Which journals are most important? {#centrality}
 
-And a related question: which journals are most *central* in the network?
+**And a related question: which journals are most *central* in the network?**
 
-**Centrality and importance in a network are highly related, but not identical.**
+Centrality and importance in a network are highly related, but not identical. 
 
+A baseline measure of the centrality of a journal could be its total degree, the sum of its in- and out- degrees. Below we compare several centrality metrics in `igraph` to this baseline. A baseline measure of the importance of a journal could be its in-degree, which in this case means the number of citations it receives from other journals.
+
+`igraph` has several built-in metrics related to both. We focus on ones that apply to directed networks.
+
+- **Degree centrality** is just the number or weight of a node's edges. 
+- **Betweenness centrality** of a vertex is the number of geodesics (shortest paths) going through it. Weights, if supplied, are interpreted as distances.
+- **Closeness centrality** - (un-normalized) One over the sum of the number of steps to access every other vertex from a given vertex (@igraph06). If normalized, it is one over the *average* number of steps.
+- **Eigenvector centrality** - Not all in-links are equally valuable. Each vertex gets a score proportional to the sum of the scores of its neighbors (@newman10). Ok for strongly connected networks (path in either direction from any node to another). Difficulties with acyclic networks, e.g., article citation networks as opposed to journal networks. Zero weight given to nodes that aren't in a strongly connected component of two or more vertices or pointed to by one. 
+
+$$
+\begin{aligned}
+  x_i' &= \sum_jA_{ij}x_j\\
+  \bf{x'} &= \bf{\kappa_1x} = \bf{Ax}  \\
+\end{aligned}
+$$
+
+
+- **PageRank** - ``The Google algorithm''. Addresses limitation of Eigenvector centrality for directed networks by giving every node a minimum weight. Also differentiates between ``important'' nodes that point to few vs. many other nodes. Roughly, the amount a theoretical web surfer visits any page. 
+
+$$
+\begin{aligned}
+  x_i &= \alpha \sum_jA_{ij}\frac{x_j}{k^{out}_j} + \beta \\
+  \bf{x} &= \alpha\bf{AD^{-1}x} +\beta\bf{1} \\
+\end{aligned}
+$$
+where we let $k^{out}_j$ be 1 where it's 0, and $D$ is a matrix whose entries are zero except the diagonal, where $D_{ii} = max(1, k^{out}_i)$, i.e. the out-degree of each node or 1 if the node's degree is 0. There are versions where $\beta$ is customized for each node, i.e. $\beta_i$, and 
+
+<!--
 <center>![](/Users/janecarlen/Documents/DSI/network_analysis_in_R/newman_networks_7_1.png)</center>
+-->
 <!--https://books.google.com/books?id=-DgTDAAAQBAJ&pg=PA178&lpg=PA178&dq=%22are+distinguished+by+whether+or+not+they+include+an+additive+constant%22&source=bl&ots=PB-ZimlUJP&sig=UfBughQwBb3_mEFY-C9zxUpgM00&hl=en&sa=X&ved=2ahUKEwjWm8iDlNfeAhUumeAKHdQ2Dw4Q6AEwAHoECAAQAQ#v=onepage&q&f=false-->
 
-`igraph` has several built-in metrics related to both
 
-- Degree centrality is just the number or weight of a node's edges. 
-- Betweenness centrality of a vertex is the number of geodesics (shortest paths) going through it.
+**How do we choose?**
 
-```{r journals_importance, eval = F, cache = T, echo = T, warning = F, message = F}
+Whether we use a weighted graph or not, the degree and betweenness centrality metrics will tend to favor journals with high numbers of in- and/or out- citations. Nodes that are conduits for information.
 
-par(mfrow = c(1,2))
+The `degree` function of `igraph` returns the degree of each vertex, the number of connections. 
+The `strength` functions returns the weighted degreed of each vertex, the sum of the weighted connections.
+The `mode` argument of each determines, for directed networks, if you want the in-degree, out-degree or the total.
+In general, centrality functions on weighted graphs will use the graphs's `weights` variable by default.
 
-cen.between.bin = estimate_betweenness(Cgraph.bin, vids = V(Cgraph), directed = TRUE, cutoff = Inf, weights = NULL)
-round(sort(cen.between.bin, decreasing = T))                   
-plot(degree(Cgraph.bin), cen.between.bin)
-text(degree(Cgraph.bin), cen.between.bin, labels = rownames(Cmatrix))
-
-cen.between = estimate_betweenness(Cgraph, vids = V(Cgraph), directed = TRUE, cutoff = Inf, weights = 1 + max(Cgraph.weights) - Cgraph.weights)
-round(sort(cen.between, decreasing = T))                   
-plot(degree(Cgraph), cen.between)
+```{r centrality_degree, cache = T, eval = T, echo = T, warning = F, message = F, results = "hide"}
+degree(Cgraph, mode = "in") # = rowSums(Cmatrix>0)
+strength(Cgraph, mode = "in") #= rowSums(Cmatrix)
+degree(Cgraph, mode = "out") # = colSums(Cmatrix>0)
+strength(Cgraph, mode = "out") #= colSums(Cmatrix)
 ```
 
-### D) Are there sub-communities of journals {#community}
+```{r centrality_between, cache = T, eval = T, echo = T, warning = F, message = F, fig.keep = "none"}
+
+# Binary version
+cen.between.bin = estimate_betweenness(Cgraph.bin, directed = TRUE, cutoff = Inf, weights = NULL)
+# Weighted version, with a decreasing function of the citation weights as the "distances"
+cen.between = estimate_betweenness(Cgraph, directed = TRUE, cutoff = Inf, weights = max(log(Cgraph.weights+1)) - log(Cgraph.weights))
+
+# Relationship with corresponding degree centrality 
+{par(mfrow = c(1,2))
+
+#outer brackets prevent "plot.new has not been called yet" error
+plot(degree(Cgraph, mode = "total"), cen.between.bin, type = "n")
+text(degree(Cgraph, mode = "total"), cen.between.bin, labels = rownames(Cmatrix), cex = .5)
+
+plot(strength(Cgraph, mode = "total"), cen.between, type = "n")
+text(strength(Cgraph, mode = "total"), cen.between, labels = rownames(Cmatrix), cex = .5)}
+```
+
+The closeness centrality in the ``in'' direction is a better indicator of influence of a journal. 
+
+```{r centrality_closeness, cache = T, eval = T, echo = T, warning = F, message = F, fig.keep = "none", fig.width = 8}
+
+# Binaryversion
+cen.closeness.bin = estimate_closeness(Cgraph.bin, mode = c("in"), cutoff = Inf, weights = NULL, normalized = FALSE)
+# Weighted version, with a decreasing function of the citation weights as the "distances"
+cen.closeness = estimate_closeness(Cgraph, mode = c("in"), cutoff = Inf, weights = max(log(Cgraph.weights+1)) - log(Cgraph.weights), normalized = FALSE)
+
+#centralization standardizes output
+#plot(centr_clo(Cgraph.bin, mode ="in")$res, cen.closeness.bin)
+
+# Relationship with corresponding in-degree centrality
+{par(mfrow = c(1,2))
+
+plot(degree(Cgraph, mode = "in"), cen.closeness.bin, type = "n")
+text(degree(Cgraph, mode = "in"), cen.closeness.bin, labels = rownames(Cmatrix), cex = .5)
+
+plot(strength(Cgraph, mode = "in"), cen.closeness.bin, type = "n")
+text(strength(Cgraph, mode = "in"), cen.closeness.bin, labels = rownames(Cmatrix), cex = .5)}
+```
+
+
+Eigenvector centrality interprets weights as connection strength, so no transformation of weights is needed.
+
+```{r centrality_eigen, cache = T, eval = T, echo = T, warning = F, message = F, fig.keep = "none", fig.width = 8}
+
+cen.eigen.bin = eigen_centrality(Cgraph.bin, directed  = TRUE)$vector
+cen.eigen = eigen_centrality(Cgraph, directed  = TRUE)$vector
+
+{par(mfrow = c(1,2))
+
+plot(degree(Cgraph, mode = "in"), cen.eigen.bin, type = "n",  main = "binary")
+text(degree(Cgraph, mode = "in"), cen.eigen.bin, labels = rownames(Cmatrix), cex = .5)
+
+plot(strength(Cgraph, mode = "in"), cen.eigen, type = "n", main = "weighted")
+text(strength(Cgraph, mode = "in"), cen.eigen, labels = rownames(Cmatrix), cex = .5)}
+
+```
+
+```{r centrality_pagerank, cache = T, eval = T, echo = T, warning = F, message = F, fig.keep = "none", fig.width = 8}
+
+cen.pagerank.bin = page_rank(Cgraph.bin, directed  = TRUE)$vector
+cen.pagerank = page_rank(Cgraph, directed  = TRUE)$vector
+
+{par(mfrow = c(1,2))
+
+plot(degree(Cgraph, mode = "in"), cen.pagerank.bin, type = "n",  main = "binary")
+text(degree(Cgraph, mode = "in"), cen.pagerank.bin, labels = rownames(Cmatrix), cex = .5)
+
+plot(strength(Cgraph, mode = "in"), cen.pagerank, type = "n", main = "weighted")
+text(strength(Cgraph, mode = "in"), cen.pagerank, labels = rownames(Cmatrix), cex = .5)}
+
+```
+
+```{r centrality_compare, cache = T, eval = T, echo = T, warning = F, message = F, fig.keep = "none", fig.width = 8}
+
+
+cen.compare = data.frame(degree.in = rank(-strength(Cgraph, mode = "in"), ties.method = "first"),
+                         degree.total = rank(-strength(Cgraph, mode = "total"), ties.method = "first"),
+                         betweenness = rank(-cen.between, ties.method = "first"),
+                         closeness = rank(-cen.closeness), 
+                         eigenvector = rank(-cen.eigen),
+                         pagerank = rank(-cen.pagerank),
+                         ratio = rank(-strength(Cgraph, mode = "in")/strength(Cgraph, mode = "out")))
+
+kable(cen.compare, caption = "Comparison of centrality measures on the weighted journal network") %>%
+  kable_styling("striped", full_width = F) %>%
+  row_spec(c(3,8,19,26), bold = F, color = "white", background = "darkred", font_size = 10) %>%
+  row_spec((1:47)[-c(3,8,19,26)], bold = F, color = "black", font_size = 10)
+```
+ 
+- The highlighted rows are generally considered to be the top four statistics journals, so their rankings should be high. 
+- Betweenness centrality and total degree have generally different behavior than the other measurements.
+- This data was tailored to have relatively homogeneous connectivity between the nodes, so some differences in centrality measures aren't exposed. 
+
+I've illustrated some commonly used centrality measures, easily to implement in `igraph`. But there are many other centrality measures.
+
+The `CINNA` package will list many centrality measures available for a graph and calculate as many of them as you'd like in one function call (@cinna18). However, it doesn't allow you to set all the parameters that you can set when calling these measures directly from `igraph` or their other native packages.
+
+```{r cinna, cache = T, eval = T, echo = T, warning = F, message = F}
+
+library(CINNA)
+cen.proper = proper_centralities(Cgraph)
+cen.compare.cinna = calculate_centralities(Cgraph, include = cen.proper[1:5])
+```
+
+
+### D) Are there sub-communities of journals? {#community}
 
 Most common clustering algorithms expect undirected graphs. Community membership is a symmetric characteristic.
 
@@ -269,9 +444,9 @@ mean(Cmatrix.bin*t(Cmatrix.bin))/mean(Tmatrix>0)
 
 
 - Assortativity:
-    + by degree: Do higher-degree nodes connect to other higher degree nodes? $sum_{jl}(e(j,k)-qout(j)qin(k)), j, k) / sigma(qin) / sigma(qout)
+    + **by degree**: Do higher-degree nodes connect to other higher degree nodes? $sum_{jl}(e(j,k)-qout(j)qin(k)), j, k) / sigma(qin) / sigma(qout)
       
-    + by characteristic: Since we don't have nodal charactersitics we'll use communities to illustrate
+    + **by characteristic**: Since we don't have nodal charactersitics we'll use communities to illustrate
  
 ```{r journals_assortativity, eval = T, cache = T}
 
@@ -333,7 +508,7 @@ fit.table2 = fit.table[order(match(rownames(fit.table),Cnet%v%"vertex.names")),]
 ```
 
  
-- Metrics like minimum path lengths between vertices can be slow to calculate. There are packages such as `fastnet` which can do these calculations fast using parallelization and sampling @fastnet18.
+- Metrics like minimum path lengths between vertices can be slow to calculate. There are packages such as `fastnet` which can do these calculations fast using parallelization and sampling (@fastnet18).
 
 
 # 3. Latentnet
@@ -345,6 +520,13 @@ fit.table2 = fit.table[order(match(rownames(fit.table),Cnet%v%"vertex.names")),]
 - Latent space network models produce model-based visualizations.
 - A residual measure of what is not captured by dyad-independent terms. 
 
+$$ y_{ij} \sim Poisson(exp(\alpha + X\Beta- \lVert(z_i, z_j)\rVert)), $$
+
+where $\alpha$ is an intercept term, $X$ represents fixed covariates, $\Beta$ is a vector of coefficients, and $z_i$ is the position of node $i$ id $d-dimensional$ space, where the value of $d$ is setbefore the model is fit. $\lVert(z_i, z_j)\rVert$ represents the Euclidean distance between $z_i$ and $z_j$, so the farther apart two nodes are in the latent space, the lower we expect their edge weight to be. 
+
+Note that we can generalize the Poisson with log link to basically any GLM. 
+
+These models are easy to implement in the package `latentnet` (@latentnet18), but because of the estimation method they can be slow for networks over about 100 nodes. 
 
 
 #  References

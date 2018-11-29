@@ -79,7 +79,7 @@ wd = "~/Documents/DSI/network_analysis_in_R/"
 
 ------------------------------------------------------------------------------------------
 
-## 1. `statnet` 
+# 1. `statnet` 
 
 A family of packages for all stages of network analysis based in exponential random graph models (ERGM).
 
@@ -165,6 +165,8 @@ sc.bipartite = network(sc.edges.condensed[,c("Source", "Target")], bipartite = n
                                           label = c(as.character(sc.nodes$Label), rep("", n.decisions)),
                                           decision.type = c(rep(1,n.judges), as.numeric(sc.edges.condensed$Type))))
 
+
+#outer brackets prevent "plot.new has not been called yet" error
 {plot(sc.bipartite,
      vertex.sides = 2+(as.numeric(sc.bipartite%v%"vertex.type"))^4,
      vertex.cex = sc.bipartite%v%"vertex.type", 
@@ -453,7 +455,7 @@ sc.ergm.gw = ergm(sc.unimode.thin ~ edges +
 
 ------------------------------------------------------------------------------------------
 
-## 2. `igraph`
+# 2. `igraph`
 
 - More algorithmic than model-based. 
 
@@ -643,9 +645,7 @@ The plot above uses the multidimensional scaling layout which attempts to preser
 
 Centrality and importance in a network are highly related, but not identical. 
 
-A baseline measure of the centrality of a journal could be its total degree, the sum of its in- and out- degrees. A baseline measure of the importance of a journal could be its in-degree, which in this case means the number of citations it receives from other journals. Below we compare several centrality metrics in `igraph` to these baselines.
-
-`igraph` has several built-in metrics related to both. We focus on ones that apply to directed networks.
+A baseline measure of the centrality of a journal could be its total degree, the sum of its in- and out- degrees. A baseline measure of the importance of a journal could be its in-degree, which in this case means the number of citations it receives from other journals. We will compare several metrics in `igraph` to these baselines. We focus on ones that apply to directed networks.
 
 - **Degree centrality** is just the number or weight of a node's edges. 
 - **Betweenness centrality** of a vertex is the number of geodesics (shortest paths) going through it. Weights, if supplied, are interpreted as distances.
@@ -659,7 +659,7 @@ $$
 \end{aligned}
 $$
 
-- **PageRank** - "The Google algorithm". Addresses limitation of Eigenvector centrality for directed networks by giving every node a minimum weight. Also differentiates between ``important'' nodes that point to few vs. many other nodes. Roughly, the number of times a theoretical web surfer visits a given page. Popular for web search and beyond because it is is straightforward, fast and guaranteed to come to a unique solution (@gleich14). (Eigenvector centrality may not.)
+- **PageRank** - "The Google algorithm". Addresses limitation of Eigenvector centrality for directed networks by giving every node a minimum weight. Also differentiates between nodes that point to few vs. many other nodes. Roughly, how often a theoretical web surfer visits a given page. Popular for web search and beyond because it is is straightforward, fast and guaranteed to come to a unique solution while Eigenvector centrality may not (@gleich14).
 
 $$
 \begin{aligned}
@@ -667,16 +667,15 @@ $$
   \bf{x} &= \alpha\bf{AD^{-1}x} +\beta\bf{1} \\
 \end{aligned}
 $$
-where we let $k^{out}_j$ be 1 where it's 0, and $D$ is a matrix whose entries are zero except the diagonal, where $D_{ii} = max(1, k^{out}_i)$, i.e. the out-degree of each node or 1 if the node's degree is 0. There are versions where $\beta$ is customized for each node, i.e. $\beta_i$. Guaranteed solution.
+where we let $k^{out}_j$ be 1 where it's observed to be 0, and $D$ is a matrix whose entries are zero except the diagonal, where $D_{ii} = max(1, k^{out}_i)$. There are versions where $\beta$ is customized for each node, i.e. $\beta_i$.
 
-**How do we choose?**
+#### Implementations in `igraph`
 
-Whether we use a weighted graph or not, the degree and betweenness centrality metrics will tend to favor journals with high numbers of in- and/or out- citations. Nodes that are conduits for information.
+**Degree centrality**
 
 The `degree` function of `igraph` returns the degree of each vertex, the number of connections. 
 The `strength` functions returns the weighted degrees of each vertex, the sum of the weighted connections.
 The `mode` argument of each determines, for directed networks, if you want the in-degree, out-degree or the total.
-In general, centrality functions on weighted graphs will use the graph's `weights` variable by default.
 
 ```{r centrality_degree, cache = T, eval = T, echo = T, warning = F, message = F, results = "hide"}
 degree(Cgraph, mode = "in") # = rowSums(Cmatrix>0)
@@ -685,48 +684,53 @@ degree(Cgraph, mode = "out") # = colSums(Cmatrix>0)
 strength(Cgraph, mode = "out") #= colSums(Cmatrix)
 ```
 
+**Betweenness centrality**
+
+In general, centrality functions on weighted graphs will use the graph's `weight` variable by default. We may have to transform it.
+
 ```{r centrality_between, cache = T, eval = T, echo = T, warning = F, message = F, fig.keep = "none"}
 
 # Binary version
 cen.between.bin = estimate_betweenness(Cgraph.bin, directed = TRUE, cutoff = Inf, weights = NULL)
+
 # Weighted version, with a decreasing function of the citation weights as the "distances"
 cen.between = estimate_betweenness(Cgraph, directed = TRUE, cutoff = Inf, weights = max(log(Cgraph.weights+1)) - log(Cgraph.weights))
 
 # Relationship with corresponding degree centrality 
 {par(mfrow = c(1,2))
 
-#outer brackets prevent "plot.new has not been called yet" error
-plot(degree(Cgraph, mode = "total"), cen.between.bin, type = "n")
-text(degree(Cgraph, mode = "total"), cen.between.bin, labels = rownames(Cmatrix), cex = .5)
+plot(igraph::degree(Cgraph, mode = "total"), cen.between.bin, type = "n")
+text(igraph::degree(Cgraph, mode = "total"), cen.between.bin, labels = rownames(Cmatrix), cex = .5)
 
 plot(strength(Cgraph, mode = "total"), cen.between, type = "n")
 text(strength(Cgraph, mode = "total"), cen.between, labels = rownames(Cmatrix), cex = .5)}
 ```
 
-The closeness centrality in the ``in'' direction is a better indicator of influence of a journal. 
+**Closeness centrality**
+
+The closeness centrality in the ``in'' direction is a better indicator of influence of a journal than in the "out" direction. 
 
 ```{r centrality_closeness, cache = T, eval = T, echo = T, warning = F, message = F, fig.keep = "none", fig.width = 8}
 
-# Binaryversion
+# Binaryv ersion
 cen.closeness.bin = estimate_closeness(Cgraph.bin, mode = c("in"), cutoff = Inf, weights = NULL, normalized = FALSE)
+
 # Weighted version, with a decreasing function of the citation weights as the "distances"
 cen.closeness = estimate_closeness(Cgraph, mode = c("in"), cutoff = Inf, weights = max(log(Cgraph.weights+1)) - log(Cgraph.weights), normalized = FALSE)
-
-#centralization standardizes output
-#plot(centr_clo(Cgraph.bin, mode ="in")$res, cen.closeness.bin)
 
 # Relationship with corresponding in-degree centrality
 {par(mfrow = c(1,2))
 
-plot(degree(Cgraph, mode = "in"), cen.closeness.bin, type = "n")
-text(degree(Cgraph, mode = "in"), cen.closeness.bin, labels = rownames(Cmatrix), cex = .5)
+plot(igraph::degree(Cgraph, mode = "in"), cen.closeness.bin, type = "n")
+text(igraph::degree(Cgraph, mode = "in"), cen.closeness.bin, labels = rownames(Cmatrix), cex = .5)
 
-plot(strength(Cgraph, mode = "in"), cen.closeness.bin, type = "n")
-text(strength(Cgraph, mode = "in"), cen.closeness.bin, labels = rownames(Cmatrix), cex = .5)}
+plot(strength(Cgraph, mode = "in"), cen.closeness, type = "n")
+text(strength(Cgraph, mode = "in"), cen.closeness, labels = rownames(Cmatrix), cex = .5)}
 ```
 
-Eigenvector centrality interprets weights as connection strength, so no transformation of weights is needed.
+**Eigenvector centrality**
 
+Eigenvector centrality interprets weights as connection strength, so no transformation of weights is needed.
 ```{r centrality_eigen, cache = T, eval = T, echo = T, warning = F, message = F, fig.keep = "none", fig.width = 8}
 
 cen.eigen.bin = eigen_centrality(Cgraph.bin, directed  = TRUE)$vector
@@ -734,13 +738,17 @@ cen.eigen = eigen_centrality(Cgraph, directed  = TRUE)$vector
 
 {par(mfrow = c(1,2))
 
-plot(degree(Cgraph, mode = "in"), cen.eigen.bin, type = "n",  main = "binary")
-text(degree(Cgraph, mode = "in"), cen.eigen.bin, labels = rownames(Cmatrix), cex = .5)
+plot(igraph::degree(Cgraph, mode = "in"), cen.eigen.bin, type = "n",  main = "binary")
+text(igraph::degree(Cgraph, mode = "in"), cen.eigen.bin, labels = rownames(Cmatrix), cex = .5)
 
 plot(strength(Cgraph, mode = "in"), cen.eigen, type = "n", main = "weighted")
 text(strength(Cgraph, mode = "in"), cen.eigen, labels = rownames(Cmatrix), cex = .5)}
 
 ```
+
+**PageRank**
+
+PageRank also interprets weights as connection strength, originally number of links to a website.
 
 ```{r centrality_pagerank, cache = T, eval = T, echo = T, warning = F, message = F, fig.keep = "none", fig.width = 8}
 
@@ -749,15 +757,17 @@ cen.pagerank = page_rank(Cgraph, directed  = TRUE)$vector
 
 {par(mfrow = c(1,2))
 
-plot(degree(Cgraph, mode = "in"), cen.pagerank.bin, type = "n",  main = "binary")
-text(degree(Cgraph, mode = "in"), cen.pagerank.bin, labels = rownames(Cmatrix), cex = .5)
+plot(igraph::degree(Cgraph, mode = "in"), cen.pagerank.bin, type = "n",  main = "binary")
+text(igraph::degree(Cgraph, mode = "in"), cen.pagerank.bin, labels = rownames(Cmatrix), cex = .5)
 
 plot(strength(Cgraph, mode = "in"), cen.pagerank, type = "n", main = "weighted")
 text(strength(Cgraph, mode = "in"), cen.pagerank, labels = rownames(Cmatrix), cex = .5)}
 
 ```
 
-Summary of centrality measures:
+**How do we choose?**
+
+Summary of centrality measures (by resulting journal rank):
 
 ```{r centrality_compare, cache = T, eval = T, echo = T, warning = F, message = F, fig.keep = "none", fig.width = 8}
 
@@ -778,26 +788,29 @@ kable(cen.compare, caption = "Comparison of centrality measures on the weighted 
 ```
  
 - The highlighted rows are generally considered to be the top four statistics journals, so their rankings should be high. 
-- Betweenness centrality and total degree have generally different behavior than the other measurements.
-- This data was tailored to have relatively homogeneous connectivity between the nodes, so some differences in centrality measures aren't exposed. 
+- The `ratio` column is based on each journal's ratio of in-citations to out-citations of a journal.
+- Betweenness centrality and total degree have generally different behavior than the other measurements. Whether we use a weighted graph or not, the degree and betweenness centrality metrics will tend to favor journals with high numbers of in- and/or out- citations, nodes that are conduits for information.
+- This statistics journal data set was tailored to have relatively homogeneous connectivity between the nodes, so some differences in centrality measures aren't exposed. 
 
-I've illustrated some commonly used centrality measures, easily to implement in `igraph`. But there are many other centrality measures.
+I've illustrated some commonly used centrality measures in `igraph`, but there are many others.
 
 The `CINNA` package will list many centrality measures available for a graph and calculate as many of them as you'd like in one function call (@cinna18). However, it doesn't allow you to set all the parameters that you can set when calling these measures directly from `igraph` or their other native packages.
 
 ```{r cinna, cache = T, eval = T, echo = T, warning = F, message = F}
 
 library(CINNA)
+# see available centralities
 cen.proper = proper_centralities(Cgraph)
+# calculate the first five of them
 cen.compare.cinna = calculate_centralities(Cgraph, include = cen.proper[1:5])
 ```
 
 
 ## D) Are there sub-communities of journals? {#community}
 
-*Community detection* and *graph partitioning* 
+#### Community detection and graph partitioning
 
-In the latter the number and size of groups is set beforehand, and goal is to minimize edges between groups. Goal is similar, more general in the former, "find the natural fault lines" (@newman10).
+Community detection and graph partitioning are two related approaches to diving a network into meaningful sub-groups. In the latter, the number and size of groups is generally set beforehand, and the goal is to minimize edges between groups. Community detection has the more generally stated goal, to "find the natural fault lines" (@newman10). What exactly that means varies by method.
 
 Most common community detection or clustering algorithms expect undirected graphs. Community membership is a symmetric characteristic.
 

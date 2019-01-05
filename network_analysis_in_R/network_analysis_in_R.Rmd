@@ -64,7 +64,7 @@ wd = "~/Documents/DSI/network_analysis_in_R/"
 
 ## B) Some terminology (more to come)
 
-- Network or Graph
+- Network or Graph 
 - Nodes (or Vertices), Edges
 - *Binary* networks (0,1 edges)
 - *Valued* networks or *signed* networks

@@ -1,7 +1,9 @@
-# Analysis of Lisa Rosenthal's spore data
-
+# Jane Carlen's analysis of Lisa Rosenthal's spore data
+# Jan 2019
+#
 # TO DO:
 # 
+# try non-constant (species specific) variance for individual effects
 # simulate more data from the model and re-fit. See what is recovered. 
 # sensitivity analysis
 # plot sampled data from the bayesian fit against true data
@@ -14,7 +16,6 @@
 # Q5 - Power analysis / how much data we need to rank or group the species?
 
 ##############################################################################################################
-
 
 # 0. Setup ----
 
@@ -65,20 +66,25 @@ ind.plot = ggplot(wide.treatment, aes(y = countS, x = interaction(ind, species))
 
 # 2. Anova/GLM 
 #    One-way ANOVA (bad) (Q1) ----
-# Use individual means - deals with non-independence of repeated measures of individuals.
+
+# We individual means instead of individual observations to deal with non-independence of repeated measures of individuals.
 # Other assumptions of ANOVA (normality of residuals, homoskedasticity, aren't met)
-# We shouldn't pay attention to it.
+# We shouldn't use these results. 
+
 lm1 = lm(countS.ind.mean ~ -1 + species, data = wide.treatment) # removed intercept for easily interpretable estiamtes
 summary(lm1)
 aov1 = aov(lm1); aov1
 plot(aov1)
 
 #    Anova with one random effect and one fixed effect (Q2) ----
-# http://www.maths.bath.ac.uk/~jjf23/mixchange/rbd.html
-# https://cran.r-project.org/web/packages/lme4/vignettes/lmer.pdf
-# Extending the linear model with R (faraway) chapter 8 and 9.2
 
-# We have repeated measures of each individual, 
+  # Helpful references:
+    # http://www.maths.bath.ac.uk/~jjf23/mixchange/rbd.html
+    # https://cran.r-project.org/web/packages/lme4/vignettes/lmer.pdf
+    # Extending the linear model with R (faraway) chapter 8 and 9.2
+
+  # Our scenario
+  # We have repeated measures of each individual
   # Species is fixed and individual is a random effect (not a level/type chosen by the researcher)
   # (Standard 2-way anova would assume two fixed effects)
 
@@ -86,8 +92,12 @@ plot(aov1)
   # random effect of individual nested in species
   # Assumes constant variance for random effects
 
-  # Normal - note range of response var definitely not normal
+  # Normal (bad) ----
+  # Our data is not normal. There are outliers and our response var is non-neg.
+  # So we won't use these results either, but here's what the implementation would look like.
+
   lisa.mmod <- lmer(countS ~ -1 + species + (1|species:ind), wide.treatment) 
+  #lisa.mmod <- lmer(countS ~ -1 + species + (1|ind2), wide.treatment) 
   summary(lisa.mmod)
   anova(lisa.mmod) # can check the species effect with an anova
   lisa.mmod.ci = data.frame(confint(lisa.mmod)[-c(1,2),]); names(lisa.mmod.ci) = c("lower_2.5","upper_97.5")
@@ -96,25 +106,35 @@ plot(aov1)
                          geom_point(data = data.frame(summary(lisa.mmod)$coefficients),
                                     aes(x = Estimate, y = 1:12)) + theme_bw()
   
-  # Poisson - for counts, but not enough variance
+  # Poisson (also bad)  ----
+  
+  # This captures the non-negativite of our data (counts), but way underestimates the variance (see "Poisson lack of fit" below)
   lisa.gmmod <- glmer(countS ~ species + (1|species:ind), wide.treatment, family = "poisson") 
   summary(lisa.gmmod)
   #confint(lisa.gmmod) fails?
 
-  # Neg.binom
-  lisa.gmmod.nb <- glmer.nb(countS ~ species + (1|species:ind), wide.treatment) 
-  #glmer(countS ~ species + (1|ind2), wide.treatment, family = "poisson") 
+  # Neg.binom (better, but still has problems) ----
+  
+  # This model captures non-negativity of our data (counts) AND the greater dispersion,
+  # but still assumes constant variance for random effects
+  lisa.gmmod.nb <- glmer.nb(countS ~ -1 + species + (1|species:ind), wide.treatment) 
   summary(lisa.gmmod.nb)
   lisa.gmmod.nb.ci = confint(lisa.gmmod.nb)
+  lisa.gmmod.nb.ci =  data.frame(lisa.gmmod.nb.ci); names(lisa.gmmod.nb.ci) = c("lower_2.5","upper_97.5")
+  lisa.gmmod.nb.ci$effect = c("sig01", rownames(lisa.mmod.ci))
+  lisa.gmmod.nb.species = ggplot(lisa.gmmod.nb.ci[-1,]) + geom_segment(aes(x = lower_2.5, xend = upper_97.5, y = effect, yend = effect)) + 
+    geom_point(data = data.frame(summary(lisa.gmmod.nb)$coefficients), aes(x = Estimate, y = 1:12)) + theme_bw()
 
+  # We look below with the bayesian results (which are similar for the simplified model) at how well the negative binomial fits our data
+  
 # 3. Poisson lack of fit (Q3) ----
   
   # Observed distributions are way more dispersed than a poisson.
-  
-  # lefts examine points less likely than the following cutoff using group means as poisson parameters
+  # We'll show that by looking at the "major" outliers
+  # using the following cutoff for probability of a point under the corresponding poisson
   cutoff1 = 1.0e-10
   
-     # Poisson distribution of points given individual means? ----
+     # Poisson distribution of individual observations given individual means? ----
   wide.treatment %>% group_by(species, ind) %>% 
     mutate(
       ind.mean = round(mean(countS)),
@@ -140,35 +160,29 @@ plot(aov1)
     geom_point(alpha = .5) +  theme(axis.text.x = element_text(angle = 90))  
 
 # 4. Should we use negative binomial (uses bayesian output below)? (Q4) ----
+  
+  # This converts from stan's neg_binomial_2 implementation of negative binomial with mean and variance to
+  # R's neg binom implementation with size and probability parameters
   convert_to_nbinom <- function(lambda, phi) {
     prob = phi/(1+lambda)
     size = lambda*phi/(1+lambda - phi)
     return(list(size = size, prob = prob))
   }
   
-  # individual
-  lambda = lisa_summary_individual[grepl("lambda", rownames(lisa_summary_individual)), 1]
-  phi = lisa_summary_individual[grepl("phi", rownames(lisa_summary_individual)), 1]
+  # Look for major outliers from negative binomial bayesian fit ----
+  lambda = lisa_summary[grepl("lambda", rownames(lisa_summary)), 1]
+  phi = lisa_summary[grepl("phi", rownames(lisa_summary)), 1]
   sp = convert_to_nbinom(as.vector(lambda), phi)
-  with(sp, {assign("mean.ind", size*(1-prob)/prob, pos = 1)})
-  with(sp, {assign("var.ind", size*(1-prob)/prob^2, pos = 1)})
+  with(sp, {assign("mean.lisa", size*(1-prob)/prob, pos = 1)})  # should equal lambda
+  with(sp, {assign("var.lisa", size*(1-prob)/prob^2, pos = 1)}) # some very large variances
   
-  dnbinom(wide.treatment$countS, size = sp$size, p = sp$prob) # Better, but huge variances in sp$var.ind
-  sum(.Last.value < cutoff1)
-  
-  # species
-  lambda = lisa_summary_species[grepl("lambda", rownames(lisa_summary_species)), 1]
-  phi = lisa_summary_species[grepl("phi", rownames(lisa_summary_species)), 1]
-  sp = convert_to_nbinom(as.vector(lambda), phi)
-  with(sp, {assign("mean.spec", size*(1-prob)/prob, pos = 1)})
-  with(sp, {assign("var.spec", size*(1-prob)/prob^2, pos = 1)})
-  
-  dnbinom(wide.treatment$countS, size = sp$size, p = sp$prob) # Better, fewer huge variances and means are closer in
-  sum(.Last.value < cutoff1)
-  
-  # compare
-  par(mfrow= c(1,1))
-  plot(mean.ind, type = "l"); points(rep(mean.spec, each = 6), type = "l", col = "red"); points(wide.treatment$countS)
+  # How many major outliers given cutoff1 set above?
+  lisa.nb.prob = dnbinom(wide.treatment$countS, size = sp$size, p = sp$prob) # Better, fewer huge variances and means are closer in
+  sum(lisa.nb.prob < cutoff1) # 
+  # much more reasonable range of probabilities than poisson:
+  hist(lisa.nb.prob, breaks = 100) 
+  # but variances can be very large:
+  hist(var.lisa, breaks = 1000)
   
 # 5. Bayesian (Q4) ####
 
@@ -189,7 +203,8 @@ lisa_data = list(
 lisa_model = "~/Documents/DSI/consultations/lisa_model.stan"
 stanc(lisa_model)
 lisa_fit = stan(file = lisa_model, model_name = "lisa", data = lisa_data, 
-                 control = list(max_treedepth = 15), verbose = TRUE, iter = 1000, chains = 2)
+                 control = list(max_treedepth = 15), verbose = TRUE, iter = 1000,
+                chains = 2)
 
 # results
 print(lisa_fit)
@@ -204,8 +219,12 @@ lisa_extracted = rstan::extract(lisa_fit)
 # species mean
 alpha_s_data = lisa_extracted$alpha_s
 colnames(alpha_s_data) = as.character(unique(wide.treatment$species))
-ggplot(melt(alpha_s_data)) + geom_line(aes(x = iterations, y = value, group = Var2)) + facet_wrap(~Var2)
-ggplot(melt(alpha_s_data)) + geom_density_ridges(aes(x = value, y = Var2))
+alpha_s_traceplot = ggplot(melt(alpha_s_data)) + geom_line(aes(x = iterations, y = value, group = Var2)) + facet_wrap(~Var2)
+alpha_s = ggplot(melt(alpha_s_data)) + geom_density_ridges(aes(x = value, y = Var2))
+
+# We can see that the estiamtes from the negative binomial model and the simple Bayesian model are basically the same,
+# though the posterior sample in the basesian fit gives us more information:
+plot_grid(lisa.gmmod.nb.species, alpha_s, ggtitle = "test")
 
 # individual mean
 beta_data = melt(lisa_extracted$beta)
@@ -227,26 +246,7 @@ phi = ggplot(phi_data) + geom_density(aes(x = lisa_extracted.phi), fill = "gray"
 
 plot_grid(ind.plot, ind.effects, sigma.s, phi, nrow = 2, rel_heights = c(7,3))
 
-
-#    negative binomial fit ----
-lambda = lisa_summary[grepl("lambda", rownames(lisa_summary)), 1]
-phi = lisa_summary[grepl("phi", rownames(lisa_summary)), 1]
-sp = convert_to_nbinom(as.vector(lambda), phi)
-with(sp, {assign("mean.lisa", size*(1-prob)/prob, pos = 1)})  # should equal lambda
-with(sp, {assign("var.lisa", size*(1-prob)/prob^2, pos = 1)}) # some very large variances
-
-dnbinom(wide.treatment$countS, size = sp$size, p = sp$prob) # Better, fewer huge variances and means are closer in
-sum(.Last.value < cutoff1)
-
-# compare to poisson
-lisa_summary = summary(lisa_fit_individual_poisson, pars = c("alpha", "beta","lambda"), probs = c(0.1, 0.9))$summary
-lambda = lisa_summary[grepl("lambda", rownames(lisa_summary)), 1]
-plot(wide.treatment$countS)
-points(mean.lisa, type = "l", col = "black", lwd = 2)
-points(lambda, type = "l", col = "green", lwd = 2)
-points(rep(1:216, each = 1000), c(lisa_extracted[["lambda"]]), pch = ".")
-
-#    (preliminary) model with individual effects ----
+#    (preliminary - ignore) model with individual effects ----
 
 # data
 lisa_data_individual = list(
@@ -276,7 +276,7 @@ lisa_summary_individual = summary(lisa_fit_individual, pars = c("phi", "alpha","
 lisa_extracted_individual = rstan::extract(lisa_fit_individual)
 
 
-#    (preliminary) model with only species effects ----
+#    (preliminary - ignore) model with only species effects ----
 
 # data
 lisa_data_species = list(
@@ -296,7 +296,7 @@ plot(lisa_fit_species, pars = c("alpha","alpha0")) # species
 lisa_summary_species = summary(lisa_fit_species, pars = c("phi", "alpha", "lambda"), probs = c(0.1, 0.9))$summary
 lisa_extracted_species = rstan::extract(lisa_fit_species)
 
-#    (bonus) investigate poisson lack of fit using stan output ----
+#    (preliminary - ignore) investigate poisson lack of fit using stan output ----
 lisa_summary_individual_poisson = summary(lisa_fit_individual_poisson, pars = c("lambda"))$summary
 lambda = lisa_summary_individual_poisson[grepl("lambda", rownames(lisa_summary_individual_poisson)), 1]
 dpois(wide.treatment$countS, lambda) #not so good
@@ -308,12 +308,14 @@ dpois(wide.treatment$countS, lambda) #not so good
 sum(.Last.value < cutoff1)
 
 
-# 6. Power using simulated data ----
+#------------------------------------------------ Future Additions ------------------------------------------------------------------------
+# 6. Extend Bayesian to allow species-specific variance for indiviual effects
+# 7. Power using simulated data ----
 
 # How would the Bayesian results look with different levels of data and spread?
 # How much data to be need to recover true parameters?
 
-# 7. Sensitivity ----
+# 8. Sensitivity ----
 
 # Try changing priors
 # Plot prior joint density of parameters ala (http://www.rss.org.uk/Images/PDF/events/2018/Gabry-5-Sept-2018.pdf/https://www.youtube.com/watch?v=E8vdXoJId8M)

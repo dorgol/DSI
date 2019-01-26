@@ -21,6 +21,8 @@
 
 library(dplyr)
 library(rstan)
+Sys.setenv(USE_CXX14 = 1)
+rstan_options(auto_write = T)
 library(tidyr)
 library(forcats)
 library(lme4)
@@ -54,15 +56,18 @@ wide.treatment = wide.treatment %>% arrange(species, ind) %>%
 # 1. EDA ----
 
 # boxplots for individuals group by species also showing data points
-ggplot(wide.treatment, aes(y = countS, x = species, group = interaction(species,ind))) +
+ind.boxplot = ggplot(wide.treatment, aes(y = countS, x = species, group = interaction(species,ind))) +
          geom_boxplot() + theme_bw() +
          geom_point(aes(y = countS, group = interaction(species,ind), color = as.factor(ind), shape = as.factor(ind)))
-ggplotly(.Last.value) #enables zoom in for species near zero
+ggplotly(ind.boxplot) #enables zoom in for species near zero
 
 # point distributions for individuals, colored by species
 ind.plot = ggplot(wide.treatment, aes(y = countS, x = interaction(ind, species))) + geom_point(aes(color = species)) + theme_bw() +
   theme(axis.text.x = element_text(angle = 90))
 
+# point distributions for individual means, colored by species
+ind.means.plot = ggplot(wide.treatment) + geom_point(aes(y= countS.ind.mean, x = species, color = species)) + 
+                  theme(axis.text.x = element_text(angle = 90))
 
 # 2. Anova/GLM 
 #    One-way ANOVA (bad) (Q1) ----
@@ -185,10 +190,6 @@ plot(aov1)
   hist(var.lisa, breaks = 1000)
   
 # 5. Bayesian (Q4) ####
-
-Sys.setenv(USE_CXX14 = 1)
-rstan_options(auto_write = T)
-
 #    model with individual effects drawn from species level means ----
 
 # data
@@ -224,17 +225,17 @@ alpha_s = ggplot(melt(alpha_s_data)) + geom_density_ridges(aes(x = value, y = Va
 
 # We can see that the estiamtes from the negative binomial model and the simple Bayesian model are basically the same,
 # though the posterior sample in the basesian fit gives us more information:
-plot_grid(lisa.gmmod.nb.species, alpha_s, ggtitle = "test")
+plot_grid(lisa.gmmod.nb.species, alpha_s)
 
 # individual mean
 beta_data = melt(lisa_extracted$beta)
 colnames(beta_data) = c("iterations", "species", "ind", "value")
-ind.effects = ggplot(beta_data) + geom_density_ridges(aes(x = value, y = interaction(ind,species), fill = as.factor(species))) +
+beta_s = ggplot(beta_data) + geom_density_ridges(aes(x = value, y = interaction(ind,species), fill = as.factor(species))) +
   guides(fill = "none")
 
 # species variance (for betas) --> can make this species-specific later
 sigma_s_data = lisa_extracted$sigma_s
-sigma.s = ggplot(melt(sigma_s_data)) + geom_density(aes(x = value), fill = "gray") +
+sigma_s = ggplot(melt(sigma_s_data)) + geom_density(aes(x = value), fill = "gray") +
   ggtitle("Posterior distribution of sigma_s, variance for individuals effects") +
   xlab("sigma_s") + theme(plot.title = element_text(size = 10))
 
@@ -244,7 +245,9 @@ phi = ggplot(phi_data) + geom_density(aes(x = lisa_extracted.phi), fill = "gray"
   ggtitle("Posterior distribution of phi, overdispersion parameter") +
   xlab("phi") + theme(plot.title = element_text(size = 10))
 
-plot_grid(ind.plot, ind.effects, sigma.s, phi, nrow = 2, rel_heights = c(7,3))
+marginal_post_plots = list(alpha_s = alpha_s, beta_s = beta_s, sigma_s = sigma_s, phi = phi) #store in list so new doesn't overwrite
+
+plot_grid(ind.plot, beta_s, sigma_s, phi, nrow = 2, rel_heights = c(7,3))
 
 #    (preliminary - ignore) model with individual effects ----
 
@@ -309,7 +312,79 @@ sum(.Last.value < cutoff1)
 
 
 #------------------------------------------------ Future Additions ------------------------------------------------------------------------
-# 6. Extend Bayesian to allow species-specific variance for indiviual effects
+# 6. Extend Bayesian to allow species-specific variance for indiviual effects ----
+
+# data
+lisa_data_sigmas = list(
+  S = n_distinct(wide.treatment$species),
+  I = 3,
+  J = 6,
+  Y = wide.treatment$countS # data arranged by species then individual 
+)
+
+# fit
+lisa_model_sigmas = "~/Documents/DSI/consultations/lisa_model_sigmas.stan"
+stanc(lisa_model_sigmas)
+lisa_fit_sigmas = stan(file = lisa_model_sigmas, model_name = "lisa_sigmas", data = lisa_data_sigmas, seed = 1,
+                control = list(max_treedepth = 15), verbose = TRUE, iter = 1000, chains = 2, save_warmup = TRUE)
+
+# results
+print(lisa_fit_sigmas)
+plot(lisa_fit_sigmas, pars = c("alpha_s", "alpha0")) # means
+plot(lisa_fit_sigmas, pars = "beta") # individual
+plot(lisa_fit_sigmas, pars = c("sigma_s", "sigma0", "phi")) # dispersion
+lisa_summary_sigmas = summary(lisa_fit_sigmas, pars = c("alpha_s", "phi", "sigma_s", "beta","lambda"), probs = c(0.1, 0.9))$summary
+lisa_extracted = rstan::extract(lisa_fit_sigmas) #overwrites simple model
+
+#    visualize marginal posteriors ----
+# species mean
+alpha_s_data = lisa_extracted$alpha_s
+colnames(alpha_s_data) = as.character(unique(wide.treatment$species))
+alpha_s_traceplot = ggplot(melt(alpha_s_data)) + geom_line(aes(x = iterations, y = value, group = Var2)) + facet_wrap(~Var2)
+alpha_s = ggplot(melt(alpha_s_data)) + geom_density_ridges(aes(x = value, y = Var2)) +
+  ggtitle("Posterior distribution of alpha_s, species effects") +
+# Now compare these estimates to the estimates from the negative binomial model and the simple Bayesian model:
+plot_grid(lisa.gmmod.nb.species, marginal_post_plots$alpha_s, alpha_s, nrow = 1)
+
+# individual mean
+beta_data = melt(lisa_extracted$beta)
+colnames(beta_data) = c("iterations", "species", "ind", "value")
+beta_s = ggplot(beta_data) + geom_density_ridges(aes(x = value, y = interaction(ind,species), fill = as.factor(species))) +
+  guides(fill = "none")
+
+# species variance (for betas) --> now species-specific
+sigma_s_data = lisa_extracted$sigma_s
+colnames(sigma_s_data) = unique(wide.treatment$species)
+sigma_s = ggplot(melt(sigma_s_data)) + geom_density_ridges(aes(x = value, y = Var2, fill = Var2), bandwidth = .05) + 
+  ggtitle("Posterior distribution of sigma_s, species-specific variance for individuals effects") +
+  guides(fill = guide_legend(reverse = T)) +
+  xlim(c(0,10)) +
+  xlab("sigma_s") + theme(plot.title = element_text(size = 10))
+
+# phi (overdispersion) -- close to 1, but note that variance already has a squared relationship to mean under this neg binom
+phi_data = data.frame(lisa_extracted$phi)
+phi = ggplot(phi_data) + geom_density(aes(x = lisa_extracted.phi), fill = "gray") +
+  ggtitle("Posterior distribution of phi, overdispersion parameter") +
+  xlab("phi") + theme(plot.title = element_text(size = 10))
+
+marginal_post_plots_sigmas = list(alpha_s = alpha_s, ind.effects = ind.effects, sigma_s = sigma_s, phi = phi) #store in list so new doesn't overwrite
+
+#Compare the results from the two models (simpler model top row) ----
+plot_grid(marginal_post_plots$alpha_s, marginal_post_plots$beta_s, marginal_post_plots$sigma_s,
+          alpha_s, beta_s, sigma_s, nrow = 2, rel_heights = c(5,5))
+
+# not sure why this pattern in posterior sigmas. not enough data to overwhelm the prior except in one case?
+# sensitive to the prior on sigma_s
+
+# look at mcmc ---
+lisa_inits = get_inits(lisa_fit_sigmas)
+lisa_sample_params = get_sampler_params(lisa_fit_sigmas, inc_warmup = FALSE)
+colMeans(lisa_sample_params[[1]]) # one for each chain
+colMeans(lisa_sample_params[[2]])
+
+lisa_posterior = as.array(lisa_fit_sigmas)
+mcmc_scatter(lisa_posterior, pars =  c("alpha_s[1]","sigma_s[1]"))
+
 # 7. Power using simulated data ----
 
 # How would the Bayesian results look with different levels of data and spread?

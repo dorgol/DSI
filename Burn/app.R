@@ -9,6 +9,10 @@
 ########################################################################################################################
 
 library(shiny)
+library(dplyr)
+library(forcats)
+library(ggplot2)
+library(reshape)
 
 # DATA ####
 TT <- read.csv("TT_jane.csv", stringsAsFactors = F, check.names = F)[,-1]
@@ -25,17 +29,18 @@ ui <- fluidPage(
    
    # Sidebar with a slider input for number of bins 
    sidebarLayout(
-      sidebarPanel(width = 2,
+      sidebarPanel(width = 3,
         
         selectInput("variable", "Variable:",
                     c("Heart Rate" = "V_HEART_RATE",
                       "Respiratory Rate" = "V_RESPIRATORY_RATE",
                       "Temperature" = "V_TEMPERATURE",
+                      "Platelets" = "V_PLATELET_COUNT",
                       "White Blood Cells" = "V_WHITE_BC",
+                      "Glucose" = "V_GLUCOSE",
                       "Sodium" = "V_SODIUM",
-                      "Potassium" = "V_POTASSIUM",
-                      "Glucose" = "V_GLUCOSE"
-                      )), 
+                      "Potassium" = "V_POTASSIUM"
+                      ), selected = "V_TEMPERATURE"), 
         
         checkboxGroupInput("outcome", "Study Outcome:",
                     selected = "Completed protocol",
@@ -45,19 +50,26 @@ ui <- fluidPage(
         
         sliderInput("n_blood", "Number blood infections:",
                     min = 0, max = max(TT$n_blood, na.rm =T),
-                    value = c(0,5), step = 1
+                    value = c(1,5), step = 1
         ),
         
         selectInput("order", "Order plots by:",
                     selected = "total_days_since_first_collection",
                     choices = c("study outcome abbr.", 
+                                "TBSA",
+                                "Age",
                                 "total_days_since_first_collection",
-                                "n_blood")
+                                "Gender",
+                                "n_blood",
+                                "n_any",
+                                "n_wound",
+                                "n_urine",
+                                "n_pneumonia")
         ),
         
-        numericInput("maxplots", "Max plots to show:", value = 20),
+        numericInput("maxplots", "Max plots to show:", value = 16),
         
-        numericInput("seed", "Seed for plot selection:", value = 1),
+        numericInput("seed", "Seed for random plot subset:", value = 1),
         
         selectInput("individual", "PER_CODE:",
                     choices = sort(unique(TT$PER_CODE))
@@ -67,8 +79,8 @@ ui <- fluidPage(
       mainPanel(
       
       tabsetPanel(type = "tabs",
-                  tabPanel("Pop. Vitals", plotOutput("varPlot", width = "800px", height="800px")),
-                  tabPanel("Individual Vitals", plotOutput("indPlot", width = "800px", height="800px"))
+                  tabPanel("Pop. Vitals", plotOutput("varPlot", width = "1000px", height="1000px")),
+                  tabPanel("Individual Vitals", plotOutput("indPlot", width = "1200px", height="1000px"))
       )
     ) 
   )
@@ -82,41 +94,77 @@ server <- function(input, output) {
      
       set.seed(input$seed)
       var1    <- input$variable
-      data.vital  <- reactive({ filter(TT, 
-                                  `study outcome abbr.` %in% input$outcome,
+      data.vital  <- reactive({ TT %>% mutate(per_code_factor = fct_reorder(per_code_factor, rank(TT[[input$order]], ties.method = "random"))) %>% 
+                                filter( `study outcome abbr.` %in% input$outcome,
                                   n_blood >= input$n_blood[1], 
                                   n_blood <= input$n_blood[2]
-                                  ) %>% mutate(per_code_factor = droplevels(per_code_factor)) %>%
-                           filter(per_code_factor %in% sample(levels(per_code_factor), size = input$maxplots)) 
-                }) #for plot order later
+                                ) %>% 
+                                mutate(per_code_factor = droplevels(per_code_factor)) %>%
+                                filter(per_code_factor %in% sample(levels(per_code_factor), size = input$maxplots))}) 
       
-      var.plot = ggplot(data.vital()) +
+      var.plot = ggplot(data.vital())
+      
+      # Vital-specific additions to highlight normal ranges
+      if (var1 == "V_TEMPERATURE") {
+        var.plot = var.plot + geom_ribbon(aes(x = days_since_first_collection, min = 36.5, ymax = 39, fill= Gender), alpha = .3)
+        #geom_hline(yintercept = 39, linetype = 2, size = .5) +
+        #geom_hline(yintercept = 36.5, linetype = 2, size = .5)
+      }
+      if (var1 == "V_HEART_RATE") {
+        var.plot = var.plot + geom_ribbon(aes(x = days_since_first_collection, ymin = 0, ymax = 110, fill = Gender),  alpha = .3)
+      }
+      if (var1 == "V_RESPIRATORY_RATE") {
+        var.plot = var.plot +  geom_ribbon(aes(x = days_since_first_collection, ymin = 0, ymax = 25, fill = Gender), alpha = .3)
+      }
+      
+      if (var1 == "V_PLATELET_COUNT") {
+        var.plot = var.plot +  geom_ribbon(aes(x = days_since_first_collection, ymin = 0, ymax = 100, fill = Gender), alpha = .3)
+      }
+      
+      if (var1 == "V_GLUCOSE") {
+        var.plot = var.plot +  geom_ribbon(aes(x = days_since_first_collection, ymin = 0, ymax = 200, fill = Gender), alpha = .3)
+      }
+      
+      var.plot = var.plot +
         geom_line(aes(x = days_since_first_collection, y = get(var1, pos = -1), group = per_code_factor, color = `study outcome abbr.`)) +
+        
+        # points for measurements taken
         geom_point(data = filter(data.vital(), !is.na(V_TIME_PERFORMED_1)),
                    aes(x = days_since_first_collection, y = get(var1, pos = -1), group = per_code_factor),
-                   fill = "blue", stroke = .1, size = 1, alpha = .5, shape = 21) +
+                   fill = "blue", stroke = .1, size = 2, alpha = .5, shape = 21) +
         geom_point(data = filter(data.vital(), !is.na(V_TIME_PERFORMED_2)),
                    aes(x = days_since_first_collection, y = get(var1, pos = -1), group = per_code_factor),
-                   fill = "green", stroke = .1, size = .5, alpha = .5, shape = 21) +
+                   fill = "green", stroke = .1, size = 1, shape = 21) +
+        
+        # points for infections observed
+        geom_point(data = filter(data.vital(), Any=="Yes"), 
+                   aes(x = days_since_first_collection, y = get(var1, pos = -1), group = per_code_factor),
+                   fill = "black", stroke = .1, shape = 21, size = 3) +
+        geom_point(data = filter(data.vital(), Urine), 
+                   aes(x = days_since_first_collection, y = get(var1, pos = -1), group = per_code_factor),
+                   fill = "yellow", stroke = .1, shape = 21, size = 3) +
+        geom_point(data = filter(data.vital(), Pneumonia), 
+                   aes(x = days_since_first_collection, y = get(var1, pos = -1), group = per_code_factor),
+                   fill = "gray", stroke = .1, shape = 21, size = 3) +
+        geom_point(data = filter(data.vital(), Wound), 
+                   aes(x = days_since_first_collection, y = get(var1, pos = -1), group = per_code_factor),
+                   fill = "purple", stroke = .1, shape = 21, size = 3) +
         geom_point(data = filter(data.vital(), Blood), 
                    aes(x = days_since_first_collection, y = get(var1, pos = -1), group = per_code_factor),
-                   fill = "red", stroke = .1, shape = 21, size = 2) +
-        scale_fill_manual(labels = c("Blood CBC", "Blood Chemistry","Blood infection")) +
+                   fill = "red", stroke = .1, shape = 21, size = 3) +
+        #scale_fill_manual(labels = c("Blood CBC", "Blood Chemistry","Blood infection")) +
+        
+        # theme
         theme_bw() +
         theme(legend.position = "top", axis.text.x = element_text(hjust = 1, angle = 45, size = 6),
-              axis.text.y = element_blank(),
+              #axis.text.y = element_blank(),
               legend.text = element_text(size = 8), 
-              strip.text = element_text(size = 10),
+              strip.text = element_text(size = 12),
               strip.background = element_blank()) +
         ylab(var1) + 
-        facet_wrap(~per_code_factor, scales = "free_x") +
+        facet_wrap(~per_code_factor+TBSA+Age, scales = "free_x", labeller = label_context) +
         ggtitle(paste(var1, "for patients"))
-        
-        # Vital-specific additions
-        if (var1 == "V_TEMPERATURE") {
-          var.plot = var.plot + geom_hline(yintercept = 39, linetype = 2, size = .1) +
-                                geom_hline(yintercept = 36.5, linetype = 2, size = .1)
-        }
+
       var.plot
    })
    
@@ -133,23 +181,25 @@ server <- function(input, output) {
      ind.plot = ggplot(data.ind(), aes(x = V_DATE_COLLECTION, y = value, color = variable, group = variable)) +
        geom_line(inherit.aes = TRUE) + 
        geom_point(data = filter(data.ind(), Blood == "TRUE"),
-                  inherit.aes = TRUE, fill = "blue", stroke = .1, size = 1, alpha = .5, shape = 21) +
+                  inherit.aes = TRUE, fill = "red", stroke = .1, size = 3, shape = 21) +
        geom_point(data = filter(data.ind(), !is.na(V_TIME_PERFORMED_1)),
                   inherit.aes = TRUE, 
-                  fill = "blue", stroke = .1, size = 1, alpha = .5, shape = 21) +
+                  fill = "blue", stroke = .1, size = 2, alpha = .5, shape = 21) +
        geom_point(data = filter(data.ind(), !is.na(V_TIME_PERFORMED_2)),
                   inherit.aes = TRUE, 
-                  fill = "blue", stroke = .1, size = 1, alpha = .5, shape = 21) +
-       theme(legend.position = "top", axis.text.x = element_text(hjust = 1, angle = 90),
-             axis.text.x = element_blank(),
+                  fill = "green", stroke = .1, size = 1, shape = 21) +
+       theme(legend.position = "top", 
+             axis.text.x = element_blank(), #element_text(hjust = 1, angle = 90),
              legend.text = element_text(size = 8),
-             strip.text = element_text(size = 10)) + 
+             strip.text = element_text(size = 9)) + 
        guides(color = FALSE) + 
        ggtitle(paste("Individual vitals for",person_to_look_at)) +
        facet_wrap(~variable, scales = "free_y")
      
      ind.plot
    })
+   
+     
 }
 
 # RUN ####

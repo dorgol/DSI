@@ -19,6 +19,14 @@ TT <- read.csv("TT_jane.csv", stringsAsFactors = F, check.names = F)[,-1]
 TT$per_code_factor = as.factor(TT$PER_CODE)
 TT$per_code_factor = reorder(TT$per_code_factor, TT$total_days_since_first_collection) #for plot order later
 vital_vars = str_extract(names(TT_blood_infection), "V_.*")[str_detect(names(TT_blood_infection), "V_.*")]
+vital_vars = c("V_DATE_COLLECTION", "V_TIME_PERFORMED_1", "V_TIME_PERFORMED_2", "V_TIME_PERFORMED_3",
+                          "V_HEART_RATE", "V_PB_SYSTOLIC", "V_BP_DIASTOLIC", "V_MEANARTERIAL_PRESSURE", "V_CENTRAL_VENOUS_PRESSURE",
+                          "V_TEMPERATURE", "V_PAO2", "V_FIO2", "V_PACO2", "V_HCO3",
+                          "V_RESPIRATORY_RATE", "V_SODIUM", "V_POTASSIUM", "V_BLOOD_UREA_NITROGEN", "V_CREATININE",
+                          "V_WHITE_BC", "V_HEMOGLOBIN", "V_HEMATOCRIT",  "V_PLATELET_COUNT", "V_GLASCOWCOMA_SCALE", 
+                          "V_GLUCOSE", "V_MODS_SCORE", "V_PH","V_BILIRUBIN") #for individual plot ordering later
+                          
+TT_Demo1 = read.csv("TT_Demo1.csv")[,-1]
 
 # UI ####
 
@@ -80,7 +88,8 @@ ui <- fluidPage(
       
       tabsetPanel(type = "tabs",
                   tabPanel("Pop. Vitals", plotOutput("varPlot", width = "1000px", height="1000px")),
-                  tabPanel("Individual Vitals", plotOutput("indPlot", width = "1200px", height="1000px"))
+                  tabPanel("Individual Vitals", plotOutput("indPlot", width = "1200px", height="1000px"),
+                           tableOutput("indText1"), tableOutput("indText2"), tableOutput("indText3"))
       )
     ) 
   )
@@ -116,11 +125,9 @@ server <- function(input, output) {
       if (var1 == "V_RESPIRATORY_RATE") {
         var.plot = var.plot +  geom_ribbon(aes(x = days_since_first_collection, ymin = 0, ymax = 25, fill = Gender), alpha = .3)
       }
-      
       if (var1 == "V_PLATELET_COUNT") {
         var.plot = var.plot +  geom_ribbon(aes(x = days_since_first_collection, ymin = 0, ymax = 100, fill = Gender), alpha = .3)
       }
-      
       if (var1 == "V_GLUCOSE") {
         var.plot = var.plot +  geom_ribbon(aes(x = days_since_first_collection, ymin = 0, ymax = 200, fill = Gender), alpha = .3)
       }
@@ -171,23 +178,37 @@ server <- function(input, output) {
    output$indPlot <- renderPlot({
      
      person_to_look_at  <- input$individual # c("TT-001-00282", "TT-010-02112", "TT-001-01068") - some intersting ones
+     
      data.ind <- reactive({
                       filter(TT, PER_CODE == person_to_look_at) %>% 
-                      select(c(vital_vars,"Blood")) %>%
-                      select(-one_of("V_ER_DEF_DATE_01","V_TIME_PERFORMED")) %>%
-                      melt(id=c("V_DATE_COLLECTION", "V_TIME_PERFORMED_1", "V_TIME_PERFORMED_2", "V_TIME_PERFORMED_3", "Blood"))
+                      select(c(vital_vars,"Blood", "Any", "Urine", "Pneumonia", "Wound")) %>%
+                      #select(-one_of("V_ER_DEF_DATE_01","V_TIME_PERFORMED")) %>%
+                      melt(id=c("V_DATE_COLLECTION", "V_TIME_PERFORMED_1", "V_TIME_PERFORMED_2", "V_TIME_PERFORMED_3", "Blood", "Any", "Urine", "Pneumonia", "Wound"))
                 })
 
      ind.plot = ggplot(data.ind(), aes(x = V_DATE_COLLECTION, y = value, color = variable, group = variable)) +
        geom_line(inherit.aes = TRUE) + 
-       geom_point(data = filter(data.ind(), Blood == "TRUE"),
-                  inherit.aes = TRUE, fill = "red", stroke = .1, size = 3, shape = 21) +
        geom_point(data = filter(data.ind(), !is.na(V_TIME_PERFORMED_1)),
                   inherit.aes = TRUE, 
                   fill = "blue", stroke = .1, size = 2, alpha = .5, shape = 21) +
        geom_point(data = filter(data.ind(), !is.na(V_TIME_PERFORMED_2)),
                   inherit.aes = TRUE, 
                   fill = "green", stroke = .1, size = 1, shape = 21) +
+       geom_point(data = filter(data.ind(), Any=="Yes"), 
+                  inherit.aes = TRUE,
+                  fill = "black", stroke = .1, shape = 21, size = 3) +
+       geom_point(data = filter(data.ind(), Urine), 
+                  inherit.aes = TRUE,
+                  fill = "yellow", stroke = .1, shape = 21, size = 3) +
+       geom_point(data = filter(data.ind(), Pneumonia), 
+                  inherit.aes = TRUE,
+                  fill = "gray", stroke = .1, shape = 21, size = 3) +
+       geom_point(data = filter(data.ind(), Wound), 
+                  inherit.aes = TRUE,
+                  fill = "purple", stroke = .1, shape = 21, size = 3) +
+       geom_point(data = filter(data.ind(), Blood == "TRUE"),
+                  inherit.aes = TRUE,
+                  fill = "red", stroke = .1, size = 3, shape = 21) +
        theme(legend.position = "top", 
              axis.text.x = element_blank(), #element_text(hjust = 1, angle = 90),
              legend.text = element_text(size = 8),
@@ -199,7 +220,14 @@ server <- function(input, output) {
      ind.plot
    })
    
-     
+   demo.ind = reactive({filter(TT_Demo1, Patient.ID == person_to_look_at) %>% 
+         select(-one_of("Patient.ID","Daily2.Form.Count", "Age.Group", "TBSA.Group",
+                        "Last.Exc.Graft.Date", "Discharge.Date", "APACHE.Date" ))})
+   
+   output$indText1 <- renderTable(demo.ind()[,1:(ncol(demo.ind())/3)])
+   output$indText2 <- renderTable(demo.ind()[,(ncol(demo.ind())/3):(2*ncol(demo.ind())/3)])
+   output$indText3 <- renderTable(demo.ind()[,(2*ncol(demo.ind())/3):ncol(demo.ind())])
+                
 }
 
 # RUN ####

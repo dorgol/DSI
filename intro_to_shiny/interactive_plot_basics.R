@@ -1,6 +1,12 @@
+# Comparison of interactive plotting libraries in R
+# Jane Carlen, January 2019
+# Notes for Duncan ----
+# One thing I've wanted more control over in plotly and rbokeh is the legend location, e.g. to move it to the margin outside the plot. 
+# Data is static in all of these? Benefit of shiny?
+
 # 1. Install & load as necessary ####
 
-workshop.packages = c("highcharter","rbokeh", "dplyr", "ggplot2")
+workshop.packages = c("highcharter", "plotly", "rbokeh", "dplyr", "ggplot2", "ggmosaic")
 workshop.install = workshop.packages[! workshop.packages %in% (installed.packages())[,1]]
 sapply(workshop.install, install.packages)
 sapply(workshop.packages, require, character.only = TRUE)
@@ -21,15 +27,16 @@ library(leaflet)
 # 2. Overall comparison ####
 
 # - rbokeh has a very intuitive and controllable interface, but is built around a 2-D cartesian framework
-# - highcharter may be best for non-cartestian type plots, e.g. pie, heatmaps, treemaps (http://jkunst.com/highcharter/highcharts.html)
+# - highcharter strength is the range of templates for non-cartesian plots, e.g. pie, heatmaps, treemaps, pyramid (http://jkunst.com/highcharter/highcharts.html)
 
 
 ######################################################################
 # i. Highcharter ####
 
-# refs:
+## References ----
 
 # https://cran.r-project.org/web/packages/highcharter/vignettes/charting-data-frames.html
+# https://api.highcharts.com/highcharts/
 
 ## Examples ----
 
@@ -49,10 +56,7 @@ h
 class(h) #"highchart"  "htmlwidget"
 
 hchart(mpg, "point", hcaes(x = displ, y = cty))
-
 hchart(dfdiam, "heatmap", hcaes(x = cut, y = clarity, value = price)) 
-hchart(dfdiam, "treemap", hcaes(x = cut, y = clarity, value = price)) 
-hchart(dfdiam, "pie", hcaes(x = cut, value = price)) 
 
 ## It all begins with highchart() or hchart####
 
@@ -60,19 +64,88 @@ hchart(dfdiam, "pie", hcaes(x = cut, value = price))
 ## hchart function (like qplot)
 ## hcaes (like aes)
 
-## hcmap ####
+## Then we add layers, hc_add_series ####
+#https://api.highcharts.com/highcharts/series
 
-hcmap("countries/us/us-all") %>%
-  hc_title(text = "USA")
 
-get_data_from_map(download_map_data("countries/us/us-all"))
 ######################################################################
 # ii. Plotly ####
+# An interactive visualization library that can be used with Python or R (rbokeh)
+# Easy to transition existing ggplots with ggplotly()
+# ggplot like layers, but uses ~ (different evaluation method?)
+## References ----
+#https://plot.ly/r/reference/
+#https://plot.ly/ggplot2/
 
+## Examples ----
+
+p <- plot_ly(data = mtcars, x = ~mpg, y = ~cyl, type = "scatter")
+p
+class(p) #"plotly"   "htmlwidget"
+
+plot_ly(data = mtcars, x = ~cyl) %>%
+  add_boxplot(y = ~mpg) %>%
+  add_markers(y = ~mpg)
+
+## It all begins with plot_ly  ----
+# plot_ly maps R objects to plotly.js, an (MIT licensed) web-based interactive charting library.
+
+p <- plot_ly(data = mtcars)
+p
+
+p <- plot_ly(data = mtcars, x = ~cyl)
+
+## Then we add layers, add_----
+
+p <- p %>% add_boxplot(y = ~mpg) %>% add_markers(y = ~mpg)
+p
+
+## We can add layout elements ----
+
+#https://plot.ly/r/reference/#layout
+
+p <- p %>% layout(
+    title = "Building the plot",
+    font = list(size = 14, family = "serif")
+)
+
+## Interactivity ----
+
+p <- p %>% 
+
+# Can you control which buttons appear?
+plot_ly(data = mtcars, x = ~cyl) %>%
+  add_boxplot(y = ~mpg) %>%
+  add_markers(y = ~mpg)
+# control tooltip direcly?
+
+
+## Convert from ggplot ---
+g <- ggplot(data = mtcars, aes(x = mpg, y = cyl)) + geom_point()
+ggplotly(g, tooltip = "x")
+
+
+p %>% layout (
+    updatemenus = list(
+    list(
+      buttons = list(
+        
+        list(method = "restyle",
+             args = list("type", "scatter"),
+             label = "Scatter"),
+        
+        list(method = "restyle",
+             args = list("type", "histogram2d"),
+             label = "2D Histogram")
+        )
+      )
+   )
+)
 ######################################################################
 # iii. RBokeh ####
 
-# Bokeh is an interactive visualization library that can be used with Python or R (rbokeh)
+# Like Plotly, Bokeh is an interactive visualization library that can be used with Python or R (rbokeh)
+## References ----
 
 ## Examples ----
 
@@ -124,11 +197,14 @@ figure() %>% ly_crect(data = mtcars, x = gear, y = cyl)
 ######################################################################
 # iv. Crosstalk ####
 
-# refs:
+library(crosstalk)
+library(d3scatter)
+library(dplyr)
+library(leaflet)
+
+## References ----
 # https://rstudio.github.io/crosstalk/using.html
-
-
-
+# html widgets for R: http://www.htmlwidgets.org/showcase_leaflet.html
 ## Linked brushing ----
 
 d3scatter(iris, ~Petal.Length, ~Petal.Width, ~Species)
@@ -156,7 +232,6 @@ bscols(
 )
 
 ## Filters ----
-
 
 shared_mtcars <- SharedData$new(mtcars)
 bscols(widths = c(3,NA,NA),
@@ -197,7 +272,14 @@ bscols(widths = c(8, 4),
 ######################################################################
 # iv. Review ####
 
-# basic points plot -- 
+# A range of layer-based syntaxes, some more like ggplot, some more like qplot
+# highcharter - Good for non-cartestian templates, e.g. treemaps and pyramids
+# plotly - extenstive library but weaker documentation
+# rbokeh - intuitive syntax good for 2-D plots in a cartesian framework
+# crosstalk - works with html widgets, which includes highcharter, plotly, rbokeh
+
+# Package comparison examples----
+## Scatter plot ---- 
 
 # base
 plot(x = mtcars$mpg, y = mtcars$cyl)
@@ -212,21 +294,28 @@ hchart(mtcars, "point", hcaes(x = mpg, y = cyl))
 figure() %>% ly_points(x = mpg, y = cyl, data = mtcars)
 #plotly
 
-# heatmap -- 
+## Heatmap ---- 
 
-# base and ggplot require reformatting the data
-mtcars.new = mtcars %>% group_by(gear, cyl) %>% summarize(fill = n()) %>% ungroup()
+# add a fill variable with number of cars in a gear x cyl group
+mtcars.heatmap = mtcars %>% group_by(gear, cyl) %>% summarize(fill = n()) %>% ungroup()
 # base
-image(as.matrix(mtcars %>% group_by(gear, cyl) %>% summarize(fill = n()) %>% ungroup()))
-# ggplot requires creating the fill variable
-ggplot(mtcars.new) +
+image(as.matrix(mtcars.heatmap))
+# ggplot
+ggplot(mtcars.heatmap) +
     geom_tile(aes(x = gear, y = cyl, fill = fill))
 # highcharter
-hchart(mtcars.new, "heatmap", hcaes(x = gear, y = cyl, value = fill))
+hchart(mtcars.heatmap, "heatmap", hcaes(x = gear, y = cyl, value = fill))
 # rbokeh
-figure(width = 600,legend_location = "top_left") %>% ly_crect(data = mtcars.new, x = gear, y = cyl, color = fill, )
+figure(width = 600,legend_location = "top_left") %>% ly_crect(data = mtcars.heatmap, x = gear, y = cyl, color = fill)
 
-# Notes for Duncan
-# One thing I've wanted more control over in plotly and rbokeh is the legend location, e.g. to move it to the margin outside the plot. 
-
+# Treemap/mosaic ---- 
+library("ggmosaic")
+# base - skip
+# ggplot
+ggplot(mtcars.new) + 
+  geom_mosaic(aes(weight = fill, x = product(gear), fill = as.factor(fill))) # fill needs to be a factor
+# highcarter
+hchart(mtcars.new, "treemap", hcaes(x = paste(gear,cyl,sep=","), value = fill, color = fill))
+# rbokeh - last I checked, bokeh doesn't support moasic plots directly (Bhttps://stackoverflow.com/questions/53797007/how-to-display-statsmodels-mosaics-directly-with-bokeh)
+hchart(mtcars.new %>% group_by(gear) %>% summarize(fill = n()), "pyramid", hcaes(y = gear, name = gear))
        

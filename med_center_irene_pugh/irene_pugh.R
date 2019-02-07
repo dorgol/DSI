@@ -18,6 +18,11 @@ library(reshape2)
 library(dplyr)
 library(forcats)
 library(plotly)
+library(htmltools)
+library(scales)
+library(cowplot)
+#devtools::install_github("rstudio/crosstalk")
+library(crosstalk)
 
 blood = read_xlsx("~/Documents/DSI/med_center_irene_pugh/Lipidomics_Data_BloodStorage-Temperature_02012019.xlsx")
 #There are 11 bags (samples) measured at 9 timepoints
@@ -32,27 +37,20 @@ blood.melt$value = round(blood.melt$value, 3)
 
 #  Static plots  ####
 #    Plot all data without dimension reduction, in order of variance (so no-change varaibles are last) ----
-plot_allvars = ggplot(blood.melt) +
+metabolites_over_time = ggplot(blood.melt) +
   geom_line(aes(x = Timepoint, y = value, group = group, color = `Storage Temperature`), size = .3) +
   facet_wrap(.~fct_reorder(variable, -variance), scales = "free_y") + 
+  scale_color_manual(values = hue_pal()(3)[3:1]) + 
   theme_bw() +
   theme(legend.position = "top", strip.background = element_blank(),
         strip.text = element_text(size = 7),
         axis.text.x = element_text(size = 6), axis.text.y = element_text(size = 6)) +
   ggtitle("All blood metabolite data over time")
-ggsave("~/Documents/DSI/med_center_irene_pugh/plot_allvars.png", plot_allvars)
 
-#    Averaged so there's one line for each temp ----
-plot_allvars_meanbytmp = ggplot(blood.melt %>% group_by(`Storage Temperature`, variable, Timepoint) %>% mutate(value = round(mean(value), 3))) +
-  geom_line(aes(x = Timepoint, y = value, group = group, color = `Storage Temperature`), size = .5) +
-  facet_wrap(.~fct_reorder(variable, -variance), scales = "free_y") + 
-  theme_bw() +
-  theme(legend.position = "top", strip.background = element_blank(), strip.text = element_text(size = 7),
-        axis.text.x = element_text(size = 6), axis.text.y = element_text(size = 6)) +
-  ggtitle("All blood metabolite data over time, AVERAGED by storage temperature")
-ggsave("~/Documents/DSI/med_center_irene_pugh/plot_allvars_meanbytmp.png", plot_allvars_meanbytmp)
+ggsave("~/Documents/DSI/med_center_irene_pugh/metabolites_over_time.png", metabolites_over_time,
+       height = 10, width = 16)
 
-#  Linked plots ####
+#        Linked version ####
 shared_blood = SharedData$new(blood %>% group_by(group))
 
 var_list = as.character(unique(blood.melt$variable)) 
@@ -65,27 +63,35 @@ ncol1 = ceiling(length(var_list)/nrow1)
 
 plot_list = lapply(1:length(var_list), function(i) {
   showleg = ifelse(i==1, TRUE, FALSE)
+  ylab = ifelse(i==1, "Value", "")
+  xlab = ifelse(i==1, "Timepoint", "")
   shared_blood %>%
     plot_ly(y=~round(get(var_list[i], envir = as.environment(shared_blood$origData())), 3),
-            x=~Timepoint, color = ~`Storage Temperature`, hoverinfo = "text") %>%
-    add_lines(name = ~`Storage Temperature`, hoverinfo = "none", 
-              type = "scatter", mode = "lines", 
-              line = list(size = .1)) %>%
-    add_markers(x = ~Timepoint, showlegend = FALSE, 
+            x=~Timepoint,
+            color = ~`Storage Temperature`,
+            colors = hue_pal()(3)[3:1], #https://www.r-graph-gallery.com/121-manage-colors-with-plotly/
+            hoverinfo = "text",
+            height = 300
+    ) %>%
+    add_lines(name = ~`Storage Temperature`,
+              hoverinfo = "none", 
+              type = "scatter", mode = "lines") %>%
+    add_markers(x = ~Timepoint,
+                showlegend = FALSE, 
                 text = paste("Sample ID:", blood$`Sample ID`,"\n",
                              "Value:", round(get(var_list[i], envir = as.environment(shared_blood$origData())), 3))) %>%
     layout(title = var_list[i],
-           legend = list(x = 0.1, y = 0.9, name = "test", orientation = "h"),
-           yaxis = list(title = ""), 
-           xaxis = list(title = ""),
-           showlegend = showleg) %>%
+           legend = list(x = 0.1, y = 0.95), #orientation = "h"
+           yaxis = list(title = ylab), 
+           xaxis = list(title = xlab),
+           showlegend = showleg,
+           margin = list(l = 20, r = 20, b = 20, t = 50, pad = 0)) %>%
     highlight(on = "plotly_selected", off = "plotly_deselect")
 })
-plot_list[[1]]
 
 plot_list = split(plot_list, rep(1:ncol1, each=nrow1))
 
-bscols(
+metabolites_over_time_interactive = bscols(
   plot_list[[1]],
   plot_list[[2]],
   plot_list[[3]],
@@ -94,25 +100,32 @@ bscols(
   plot_list[[6]]
 )
 
+save_html(metabolites_over_time_interactive, file = "~/Documents/DSI/med_center_irene_pugh/metabolites_over_time.html")
+
+#    Averaged so there's one line for each temp ----
+metabolites_over_time_avg_by_tmp = ggplot(blood.melt %>% group_by(`Storage Temperature`, variable, Timepoint) %>% mutate(value = round(mean(value), 3))) +
+  geom_line(aes(x = Timepoint, y = value, group = group, color = `Storage Temperature`), size = .5) +
+  scale_color_manual(values = hue_pal()(3)[3:1]) +
+  facet_wrap(.~fct_reorder(variable, -variance), scales = "free_y") + 
+  theme_bw() +
+  theme(legend.position = "top", strip.background = element_blank(), strip.text = element_text(size = 7),
+        axis.text.x = element_text(size = 6), axis.text.y = element_text(size = 6)) +
+  ggtitle("All blood metabolite data over time, AVERAGED by storage temperature")
+
+ggsave("~/Documents/DSI/med_center_irene_pugh/metabolites_over_time_avg_by_tmp.png",
+       metabolites_over_time_avg_by_tmp, height = 10, width = 16)
+
+#        Interactive version (No need for linked plot for average) ----
+
+save_html(ggplotly(metabolites_over_time_avg_by_tmp, width = 1600, height = 1000) %>%
+  add_lines(hoverinfo = "none") %>%
+  layout(legend = list(x = 0, y = 1.1, orientation = "h")), 
+  "~/Documents/DSI/med_center_irene_pugh/metabolites_over_time_avg_by_tmp.html")
+
+
 #    Dimension reduction, in order of variance (so no-change varaibles are last) ----
 blood.pcadata = blood %>% select( one_of( c(as.character(unique(blood.melt$variable[blood.melt$variance > 0])) ,
                                             "Storage Temperature", "Timepoint", "group") ))# remove variables with no variance
-dim(blood)
-dim(blood.pcadata)
-names(blood)[!names(blood) %in% names(blood.pcadata)]
-
-pca.2 = prcomp(blood.pcadata %>% filter(`Storage Temperature` == 2) %>% 
-                 select(-one_of("Storage Temperature", "Timepoint", "group")), center = TRUE, scale = TRUE)
-summary(pca.2)$importance; plot(.Last.value[3,])
-
-pca.4 = prcomp(blood.pcadata %>% filter(`Storage Temperature` == 4) %>% 
-                 select(-one_of("Storage Temperature", "Timepoint", "group")), center = TRUE, scale = TRUE)
-summary(pca.4)$importance; plot(.Last.value[3,])
-
-# Can't scale, 0-variance variables
-#pca.6 = prcomp(blood.pcadata %>% filter(`Storage Temperature` == 6) %>%
-#                 select(-one_of("Storage Temperature", "Timepoint", "group")), center = TRUE, scale = TRUE)
-#summary(pca.6)$importance; plot(.Last.value[3,])
 
 # About 70 pct of variance explained in first 4 components
 pca.all = prcomp(blood.pcadata %>% 
@@ -124,21 +137,25 @@ blood.pca.melt = melt(blood.pca.results, id.vars = c("Timepoint", "Storage Tempe
 
 
 #    Plot all data with composite-of-metabolites (dimension reduction), in order of variance (so no-change varaibles are last) ----
-plot_pcvars = ggplot(blood.pca.melt) +
+metabolite_pcvars = ggplot(blood.pca.melt) +
   geom_line(aes(x = Timepoint, y = value, group = group, color = `Storage Temperature`)) +
+  scale_color_manual(values = hue_pal()(3)[3:1]) + 
   facet_wrap(.~variable, scales = "free_y") + 
   theme_bw() +
   theme(legend.position = "top", strip.background = element_blank(), strip.text = element_text(size = 7)) +
   ggtitle("Principal components of blood metabolite data over time")
 
-plot_pcvars_meanbytmp = ggplot(blood.pca.melt %>% group_by(`Storage Temperature`, variable, Timepoint) %>% mutate(value = mean(value))) +
+metabolite_pcvars_avg_by_tmp = ggplot(blood.pca.melt %>% group_by(`Storage Temperature`, variable, Timepoint) %>% mutate(value = mean(value))) +
   geom_line(aes(x = Timepoint, y = value, group = group, color = `Storage Temperature`), size = .5) +
+  scale_color_manual(values = hue_pal()(3)[3:1]) + 
   facet_wrap(.~variable, scales = "free_y") + 
   theme_bw() +
   theme(legend.position = "top", strip.background = element_blank(), strip.text = element_text(size = 7)) +
   ggtitle("Principal components of blood metabolite data over time, AVERAGED by storage temperature")
 
-ggsave("~/Documents/DSI/med_center_irene_pugh/plot_pcvars.png", plot_grid(plot_pcvars, plot_pcvars_meanbytmp, nrow = 1))
+ggsave("~/Documents/DSI/med_center_irene_pugh/metabolite_pcvars.png", 
+       plot_grid(metabolite_pcvars, metabolite_pcvars_avg_by_tmp, nrow = 1),
+       height = 10, width = 16.5)
 
 
 #    Plots showing elements of principal components ----
@@ -175,7 +192,8 @@ plot_pc4 = ggplot(data.frame(PC4 = round(pca.all$rotation[,4],3), variable = as.
   ggtitle("PC4: 5% of variance explained") +
   xlab("Metabolites ordered by loading in PC")
 
-plot_pcs = plot_grid(plot_pc1, plot_pc2, plot_pc3, plot_pc4)
+metabolite_pcs = plot_grid(plot_pc1, plot_pc2, plot_pc3, plot_pc4)
 
-ggsave("~/Documents/DSI/med_center_irene_pugh/plot_pcs.png", plot_pcs)
+ggsave("~/Documents/DSI/med_center_irene_pugh/metabolite_pcs.png", metabolite_pcs,
+       height = 10, width = 16)
 

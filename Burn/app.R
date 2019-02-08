@@ -13,6 +13,8 @@ library(dplyr)
 library(forcats)
 library(ggplot2)
 library(reshape)
+library(crosstalk)
+library(plotly)
 
 # DATA ####
 TT <- read.csv("TT_jane.csv", stringsAsFactors = F, check.names = F)[,-1]
@@ -56,6 +58,18 @@ ui <- fluidPage(
                     choiceValues = sort(unique(TT$`study outcome abbr.`))
         ),
         
+        checkboxGroupInput("infection_type", "Show infection type:",
+                           selected = "Blood",
+                           choiceNames = list(
+                             tags$span("Blood", style = "color: red;"),
+                             tags$span("Any", style = "color: black;"), 
+                             tags$span("Urine", style = "color: orange;"), 
+                             tags$span("Pneumonia", style = "color: gray;"),
+                             tags$span("Wound", style = "color: purple;")
+                           ),
+                           choiceValues = c("Blood", "Any", "Urine", "Pneumonia", "Wound")
+        ),
+        
         sliderInput("n_blood", "Number blood infections:",
                     min = 0, max = max(TT$n_blood, na.rm =T),
                     value = c(1,5), step = 1
@@ -77,18 +91,19 @@ ui <- fluidPage(
         
         numericInput("maxplots", "Max plots to show:", value = 16),
         
-        numericInput("seed", "Seed for random plot subset:", value = 1),
-        
         selectInput("individual", "PER_CODE:",
-                    choices = sort(unique(TT$PER_CODE))
-        )
+                    choices = sort(unique(TT$PER_CODE)), selected = sample(TT$PER_CODE,1)
+        ),
+        
+        numericInput("seed", "Seed for random plot subset:", value = 1)
+        
       ),
     
       mainPanel(
       
       tabsetPanel(type = "tabs",
-                  tabPanel("Pop. Vitals", plotOutput("varPlot", width = "1000px", height="1000px")),
-                  tabPanel("Individual Vitals", plotOutput("indPlot", width = "1200px", height="1000px"),
+                  tabPanel("Pop. Vitals", plotOutput("varPlot", width = "1600px", height="1000px")),
+                  tabPanel("Individual Vitals", plotlyOutput("indPlot", width = "1200px", height="1000px"), br(),
                            tableOutput("indText1"), tableOutput("indText2"), tableOutput("indText3"))
       )
     ) 
@@ -134,79 +149,97 @@ server <- function(input, output) {
       
       var.plot = var.plot +
         geom_line(aes(x = days_since_first_collection, y = get(var1, pos = -1), group = per_code_factor, color = `study outcome abbr.`)) +
-        
         # points for measurements taken
         geom_point(data = filter(data.vital(), !is.na(V_TIME_PERFORMED_1)),
                    aes(x = days_since_first_collection, y = get(var1, pos = -1), group = per_code_factor),
                    fill = "blue", stroke = .1, size = 2, alpha = .5, shape = 21) +
         geom_point(data = filter(data.vital(), !is.na(V_TIME_PERFORMED_2)),
                    aes(x = days_since_first_collection, y = get(var1, pos = -1), group = per_code_factor),
-                   fill = "green", stroke = .1, size = 1, shape = 21) +
-        
-        # points for infections observed
-        geom_point(data = filter(data.vital(), Any=="Yes"), 
-                   aes(x = days_since_first_collection, y = get(var1, pos = -1), group = per_code_factor),
-                   fill = "black", stroke = .1, shape = 21, size = 3) +
-        geom_point(data = filter(data.vital(), Urine), 
-                   aes(x = days_since_first_collection, y = get(var1, pos = -1), group = per_code_factor),
-                   fill = "yellow", stroke = .1, shape = 21, size = 3) +
-        geom_point(data = filter(data.vital(), Pneumonia), 
-                   aes(x = days_since_first_collection, y = get(var1, pos = -1), group = per_code_factor),
-                   fill = "gray", stroke = .1, shape = 21, size = 3) +
-        geom_point(data = filter(data.vital(), Wound), 
-                   aes(x = days_since_first_collection, y = get(var1, pos = -1), group = per_code_factor),
-                   fill = "purple", stroke = .1, shape = 21, size = 3) +
-        geom_point(data = filter(data.vital(), Blood), 
-                   aes(x = days_since_first_collection, y = get(var1, pos = -1), group = per_code_factor),
-                   fill = "red", stroke = .1, shape = 21, size = 3) +
+                   fill = "green", stroke = .1, size = 1, shape = 21)
         #scale_fill_manual(labels = c("Blood CBC", "Blood Chemistry","Blood infection")) +
+      
+        # points for infections observed
+      print(input$infection_type)
+        if (sum(grepl(pattern = "Any", input$infection_type))) {
+          var.plot = var.plot + geom_point(data = filter(data.vital(), Any=="Yes"), 
+                   aes(x = days_since_first_collection, y = get(var1, pos = -1), group = per_code_factor),
+                   fill = "black", stroke = .1, shape = 21, size = 3)
+        }
+        
+        if (sum(grepl(pattern = "Urine", input$infection_type))) {
+          var.plot = var.plot + geom_point(data = filter(data.vital(), Urine), 
+                   aes(x = days_since_first_collection, y = get(var1, pos = -1), group = per_code_factor),
+                   fill = "orange", stroke = .1, shape = 21, size = 3)
+        }
+      
+        if (sum(grepl(pattern = "Pneumonia", input$infection_type))) {
+          var.plot = var.plot + geom_point(data = filter(data.vital(), Pneumonia), 
+                   aes(x = days_since_first_collection, y = get(var1, pos = -1), group = per_code_factor),
+                   fill = "gray", stroke = .1, shape = 21, size = 3)
+        }
+        
+        if (sum(grepl(pattern = "Wound", input$infection_type))) {
+          var.plot = var.plot + geom_point(data = filter(data.vital(), Wound), 
+                   aes(x = days_since_first_collection, y = get(var1, pos = -1), group = per_code_factor),
+                   fill = "purple", stroke = .1, shape = 21, size = 3)
+        }
+      
+        if (sum(grepl(pattern = "Blood", input$infection_type))) {
+          var.plot = var.plot + geom_point(data = filter(data.vital(), Blood), 
+                   aes(x = days_since_first_collection, y = get(var1, pos = -1), group = per_code_factor),
+                   fill = "red", stroke = .1, shape = 21, size = 3)
+        }
         
         # theme
-        theme_bw() +
-        theme(legend.position = "top", axis.text.x = element_text(hjust = 1, angle = 45, size = 6),
+        var.plot = var.plot +
+          theme_bw() +
+          theme(legend.position = "top", axis.text.x = element_text(hjust = 1, angle = 45, size = 6),
               #axis.text.y = element_blank(),
               legend.text = element_text(size = 8), 
               strip.text = element_text(size = 12),
               strip.background = element_blank()) +
-        ylab(var1) + 
-        facet_wrap(~per_code_factor+TBSA+Age, scales = "free_x", labeller = label_context) +
-        ggtitle(paste(var1, "for patients"))
+          ylab(var1) + 
+          facet_wrap(~per_code_factor+TBSA+Age, scales = "free_x", labeller = label_context) +
+          ggtitle(paste(var1, "for patients"))
 
       var.plot
    })
    
-   output$indPlot <- renderPlot({
+   output$indPlot <- renderPlotly({
      
      person_to_look_at  <- input$individual # c("TT-001-00282", "TT-010-02112", "TT-001-01068") - some intersting ones
      
      data.ind <- reactive({
-                      filter(TT, PER_CODE == person_to_look_at) %>% 
-                      select(c(vital_vars,"Blood", "Any", "Urine", "Pneumonia", "Wound")) %>%
-                      #select(-one_of("V_ER_DEF_DATE_01","V_TIME_PERFORMED")) %>%
-                      melt(id=c("V_DATE_COLLECTION", "V_TIME_PERFORMED_1", "V_TIME_PERFORMED_2", "V_TIME_PERFORMED_3", "Blood", "Any", "Urine", "Pneumonia", "Wound"))
+                      SharedData$new(
+                        filter(TT, PER_CODE == person_to_look_at) %>% 
+                        select(c(vital_vars,"Blood", "Any", "Urine", "Pneumonia", "Wound")) %>%
+                        #select(-one_of("V_ER_DEF_DATE_01","V_TIME_PERFORMED")) %>%
+                        melt(id=c("V_DATE_COLLECTION", "V_TIME_PERFORMED_1", "V_TIME_PERFORMED_2", "V_TIME_PERFORMED_3", "Blood", "Any", "Urine", "Pneumonia", "Wound"))
+                      )  
                 })
 
-     ind.plot = ggplot(data.ind(), aes(x = V_DATE_COLLECTION, y = value, color = variable, group = variable)) +
+     
+     ind.plot = ggplot(data.ind()$origData(), aes(x = V_DATE_COLLECTION, y = value, group = variable)) +
        geom_line(inherit.aes = TRUE) + 
-       geom_point(data = filter(data.ind(), !is.na(V_TIME_PERFORMED_1)),
+       geom_point(data = filter(data.ind()$origData(), !is.na(V_TIME_PERFORMED_1)),
                   inherit.aes = TRUE, 
-                  fill = "blue", stroke = .1, size = 2, alpha = .5, shape = 21) +
-       geom_point(data = filter(data.ind(), !is.na(V_TIME_PERFORMED_2)),
+                  fill = "blue", stroke = .1, size = 2, shape = 22) +
+       geom_point(data = filter(data.ind()$origData(), !is.na(V_TIME_PERFORMED_2)),
                   inherit.aes = TRUE, 
-                  fill = "green", stroke = .1, size = 1, shape = 21) +
-       geom_point(data = filter(data.ind(), Any=="Yes"), 
+                  fill = "green", stroke = .1, size = 1, shape = 22) +
+       geom_point(data = filter(data.ind()$origData(), Any=="Yes"), 
                   inherit.aes = TRUE,
                   fill = "black", stroke = .1, shape = 21, size = 3) +
-       geom_point(data = filter(data.ind(), Urine), 
+       geom_point(data = filter(data.ind()$origData(), Urine), 
                   inherit.aes = TRUE,
-                  fill = "yellow", stroke = .1, shape = 21, size = 3) +
-       geom_point(data = filter(data.ind(), Pneumonia), 
+                  fill = "orange", stroke = .1, shape = 21, size = 3) +
+       geom_point(data = filter(data.ind()$origData(), Pneumonia), 
                   inherit.aes = TRUE,
                   fill = "gray", stroke = .1, shape = 21, size = 3) +
-       geom_point(data = filter(data.ind(), Wound), 
+       geom_point(data = filter(data.ind()$origData(), Wound), 
                   inherit.aes = TRUE,
                   fill = "purple", stroke = .1, shape = 21, size = 3) +
-       geom_point(data = filter(data.ind(), Blood == "TRUE"),
+       geom_point(data = filter(data.ind()$origData(), Blood == "TRUE"),
                   inherit.aes = TRUE,
                   fill = "red", stroke = .1, size = 3, shape = 21) +
        theme(legend.position = "top", 
@@ -214,10 +247,12 @@ server <- function(input, output) {
              legend.text = element_text(size = 8),
              strip.text = element_text(size = 9)) + 
        guides(color = FALSE) + 
-       ggtitle(paste("Individual vitals for",person_to_look_at)) +
+       ggtitle(paste("Individual vitals for", person_to_look_at)) +
        facet_wrap(~variable, scales = "free_y")
      
-     ind.plot
+     ggplotly(ind.plot, tooltip = c("x", "y")) %>%
+       layout(margin = c(0,0,10,0,0)) %>%
+       highlight(on = "plotly_selected", off = "plotly_deselect")
    })
    
    demo.ind = reactive({filter(TT_Demo1, Patient.ID == person_to_look_at) %>% 

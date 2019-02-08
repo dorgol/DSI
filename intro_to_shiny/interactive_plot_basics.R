@@ -3,6 +3,10 @@
 # Notes for Duncan ----
 # One thing I've wanted more control over in plotly and rbokeh is the legend location, e.g. to move it to the margin outside the plot. 
 # Data is static in all of these? Benefit of shiny?
+# Other things to look into ----
+# https://rdrr.io/cran/ggvis/man/linked_brush.html
+# https://ggvis.rstudio.com/
+# https://rstudio.github.io/crosstalk/shiny.html
 
 # 1. Install & load as necessary ####
 
@@ -28,7 +32,7 @@ library(leaflet)
 
 # - rbokeh has a very intuitive and controllable interface, but is built around a 2-D cartesian framework
 # - highcharter strength is the range of templates for non-cartesian plots, e.g. pie, heatmaps, treemaps, pyramid (http://jkunst.com/highcharter/highcharts.html)
-
+# - plotly is the easiet to convert from ggplot, so you can layer in interactivity
 
 ######################################################################
 # i. Highcharter ####
@@ -70,8 +74,9 @@ hchart(dfdiam, "heatmap", hcaes(x = cut, y = clarity, value = price))
 
 ######################################################################
 # ii. Plotly ####
+# Major pro: Easy to transition existing ggplots with ggplotly()
+#  Can build the plot in ggplot then decide to add inerteracitivity
 # An interactive visualization library that can be used with Python or R (rbokeh)
-# Easy to transition existing ggplots with ggplotly()
 # ggplot like layers, but uses ~ (different evaluation method?)
 ## References ----
 #https://plot.ly/r/reference/
@@ -108,6 +113,21 @@ p <- p %>% layout(
     title = "Building the plot",
     font = list(size = 14, family = "serif")
 )
+
+# contolling lines and points ----
+
+trace_0 <- rnorm(100, mean = 5)
+trace_1 <- rnorm(100, mean = 0)
+trace_2 <- rnorm(100, mean = -5)
+x <- c(1:100)
+
+data <- data.frame(x, trace_0, trace_1, trace_2)
+
+p <- plot_ly(data, x = ~x, y = ~trace_0, name = 'trace 0', type = 'scatter', mode = 'lines') %>%
+  add_trace(y = ~trace_1, name = 'trace 1', mode = 'lines+markers') %>%
+  add_trace(y = ~trace_2, name = 'trace 2', mode = 'markers')
+
+p
 
 ## Interactivity ----
 
@@ -266,8 +286,6 @@ bscols(widths = c(8, 4),
                    width = "100%", height = 200)
        )
 )
-
-
 
 ######################################################################
 # iv. Review ####

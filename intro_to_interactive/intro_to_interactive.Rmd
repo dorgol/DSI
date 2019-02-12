@@ -1,0 +1,136 @@
+---
+title: "Getting Started with Interactive Plotting in R"
+author: Jane Carlen, UC Davis Data Science Initiative
+date: March 1, 2019
+output: 
+  ioslides_presentation:
+    incremental: false
+---
+
+## Goals
+
+Present logic and tools for interactively plotting *static* data. 
+
+In two weeks we'll discuss Shiny, where data can be *dynamic*.
+
+- When to use interactivity
+- Work through an examples with
+    - Plotly  
+    - Crosstalk  
+- Other packages, RBokeh, Highcharter  
+
+<!--look more into leaflet-->
+<!-- which ones have ability to write your own js to add to event handlers-->
+
+
+## Why Interactive Plots?
+
+> - ~~They look cool~~
+> - Exploratory, especially valuable EDA, your own or the users.
+    + Plots you publish have an argument, focus reader attention.
+> - Browser-based, easy to share, few compatibility issues.
+> - Expose the data
+> - Increase the amount of information you can share cleanly
+> - Brushing and linking
+    + Draw connections between data
+    + Uncover relationships
+
+<!-- Best practices for interactivity. One slide? Sprinkled throughout? -->
+
+## Example - Pizza to the Polls
+
+[Pizza to the polls](https://polls.pizza/) - Delivered over 10,000 pizzas to 41 states    
+Data from 2018 midterm elections
+
+<!-- I used google map API to get lat/long, standardized variable names, removed some unnecessary fields,
+("X", "Other.Info", "Contact.Info", "Slack.Thread", "Pizza.phone.number", "Slack.ID", "Twitter.Thread", "Tweet.ID"),
+and removed 14 missing-address rows from the original data -->
+
+```{r setup, echo = F, cache = T, warning = F, messsage = F}
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(crosstalk)
+```
+
+
+```{r load, cache = F}
+setwd("~/Documents/DSI/intro_to_interactive")
+pizza = read.csv("pizza.csv")
+names(pizza); dim(pizza)
+```
+
+## Pizza data {.smaller}
+
+```{r}
+head(pizza, 4)
+```
+
+## How to visualize this data? {}
+
+Questions we have:
+- Where were pizzas delivered? 
+- When were pizzas delivered? Relative to poll-closing times?
+- What describes places where people wait on lines?
+
+## Example - Static Plot
+
+Here is a static plot built in ggplot. It looks OK, but what is it missing?
+
+## Example - Interactive Plot
+
+<!--Pizza plot or other example -->
+
+## Example - Linked Interactive Plot
+
+<!--Pizza plot or other example -->
+
+```{r election_data, eval = F}
+
+# NOT the elections package on cran - https://github.com/MEDSL/elections/blob/master/README.md
+# make sure devtools is updated
+if (!require('devtools', quietly = TRUE)) install.packages('devtools')
+devtools::install_github('MEDSL/elections') 
+
+# The package makes available the following datasets:
+
+# presidential_precincts_2016
+# senate_precincts_2016
+# house_precincts_2016
+# state_precincts_2016
+# local_precincts_2016
+
+data("presidential_precincts_2016")
+head(presidential_precincts_2016)
+
+pres_by_state_returns_2016 = presidential_precincts_2016 %>% group_by(state_postal, party) %>%
+  summarize(part_votes = sum(votes))
+
+https://github.com/nvkelso/election-geodata
+
+```
+
+
+<!--  Closeness of election outcomes --> 
+<!-- filters on pizzas to show --> ?
+
+## Live Example
+
+<!-- Now we code an example ourselves (leave presentation). Stay with pizza example and data?-->
+
+## Review - Advantages of Plotly
+
+## Review - Limitations of Plotly
+
+## Related Packages - Bokeh
+
+## Related Packages - Highcharter
+
+## Related Packages - rCharts
+
+
+
+## Part II - Under the hood (Duncan)
+
+- What is plotly actually doing -- relationship between R, html, javascript
+- What kinds of backends (html, server, server running R) can be how and how do they work?

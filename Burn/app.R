@@ -7,8 +7,7 @@
 #    http://shiny.rstudio.com/
 #
 # TO DO:
-# Figure out why Crosstalk doesn't work across facets
-# Coloring for blood chemistry test performed not matching in variable plot and individual plot
+# Figure out why Crosstalk doesn't work across facets (columns)
 ########################################################################################################################
 
 library(shiny)
@@ -19,15 +18,17 @@ library(reshape)
 library(crosstalk)
 library(plotly)
 library(scales)
+library(stringr)
+
 
 # DATA ####
 TT <- read.csv("TT_jane.csv", stringsAsFactors = F, check.names = F)[,-1]
 TT$per_code_factor = as.factor(TT$PER_CODE)
 TT$per_code_factor = reorder(TT$per_code_factor, TT$total_days_since_first_collection) #for plot order later
-TT = TT %>% mutate(Blood_test_performed = case_when(
+TT = TT %>% mutate(Blood_test_performed = as.factor(case_when(
   !is.na(V_TIME_PERFORMED_1) & !is.na( V_TIME_PERFORMED_2) ~ "Blood CBC and Chemistry",
   is.na(V_TIME_PERFORMED_1) & !is.na( V_TIME_PERFORMED_2) ~ "Blood CBC",
-  !is.na(V_TIME_PERFORMED_1) &  is.na(V_TIME_PERFORMED_2) ~ "Blood Chemistry")) #both NA auto goes to NA
+  !is.na(V_TIME_PERFORMED_1) &  is.na(V_TIME_PERFORMED_2) ~ "Blood Chemistry"))) #both NA auto goes to NA
 vital_vars = str_extract(names(TT_blood_infection), "V_.*")[str_detect(names(TT_blood_infection), "V_.*")]
 vital_vars = c("V_DATE_COLLECTION", "V_TIME_PERFORMED_1", "V_TIME_PERFORMED_2", "V_TIME_PERFORMED_3",
                           "V_HEART_RATE", "V_PB_SYSTOLIC", "V_BP_DIASTOLIC", "V_MEANARTERIAL_PRESSURE", "V_CENTRAL_VENOUS_PRESSURE",
@@ -111,7 +112,7 @@ ui <- fluidPage(
       
       tabsetPanel(type = "tabs",
                   tabPanel("Pop. Vitals", plotOutput("varPlot", width = "1200px", height="900px")),
-                  tabPanel("Individual Vitals", plotlyOutput("indPlot", width = "1200px", height="900px"), br(),
+                  tabPanel("Individual Vitals", plotOutput("indPlot", width = "1200px", height="900px"), hr(),
                            tableOutput("indText1"), tableOutput("indText2"), tableOutput("indText3"))
       )
     ) 
@@ -126,15 +127,16 @@ server <- function(input, output) {
      
       set.seed(input$seed)
       var1    <- input$variable
-      data.vital  <- reactive({ TT %>% mutate(per_code_factor = fct_reorder(per_code_factor, rank(TT[[input$order]], ties.method = "random"))) %>% 
+      data.vital  <- reactive({ TT %>% mutate(per_code_factor = fct_reorder(per_code_factor, rank(TT[[input$order]], ties.method = "random")),
+                                              group = factor(paste("PER_CODE:", per_code_factor, "\nTBSA:", TBSA, ", Age:", Age, ", Gender:", Gender)),
+                                              group = fct_reorder(group, TT[[input$order]])) %>% 
                                 filter( `study outcome abbr.` %in% input$outcome,
                                   n_blood >= input$n_blood[1], 
-                                  n_blood <= input$n_blood[2]
+                                  n_blood <= input$n_blood[2] 
                                 ) %>% 
-                                mutate(per_code_factor = droplevels(per_code_factor),
-                                       group = paste("PER_CODE:", per_code_factor, "\nTBSA:", TBSA, ", Age:", Age, ", Gender:", Gender)
-                                ) %>%
-                                filter(per_code_factor %in% sample(levels(per_code_factor), size = min(nlevels(per_code_factor),input$maxplots)))}) 
+                                mutate(per_code_factor = droplevels(per_code_factor)) %>%
+                                filter(per_code_factor %in% sample(levels(per_code_factor), size = min(nlevels(per_code_factor),input$maxplots)))
+                              }) 
       
       var.plot = ggplot(data.vital())
       
@@ -159,12 +161,12 @@ server <- function(input, output) {
       
       var.plot = var.plot +
         geom_line(aes(x = days_since_first_collection, y = get(var1, pos = -1), group = per_code_factor, color = `study outcome abbr.`)) +
-        
-        # points for measurements taken
+    
+        #points for measurements taken
         geom_point(data = filter(data.vital(), !is.na(Blood_test_performed)),
                    aes(x = days_since_first_collection, y = get(var1, pos = -1), fill = Blood_test_performed, group = per_code_factor),
-                   stroke = .1, size = 2, shape = 21) +
-        scale_fill_manual(values = c("#a1dab4", "#225ea8", "#41b6c4"))
+                   stroke = .1, size = 2, shape = 23) +
+        scale_fill_manual(values = c("#d8b365", "#225ea8", "#41b6c4"))
         #scale_fill_manual(labels = c("Blood CBC" (1), "Blood Chemistry" (2),"Blood infection")) +
       
         # points for infections observed
@@ -212,79 +214,92 @@ server <- function(input, output) {
           ggtitle(paste(var1, "for patients"))
 
       var.plot
+      #var.ggplotly = ggplotly(var.plot) %>% highlight(on = "plotly_hover", selectize = TRUE) %>% rangeslider()
    })
    
-   output$indPlot <- renderPlotly({
+   output$indPlot <- renderPlot({
      
      person_to_look_at  <- input$individual # c("TT-001-00282", "TT-010-02112", "TT-001-01068") - some intersting ones
      person_gender = filter(TT, PER_CODE == person_to_look_at)$Gender[1]
      person_gender_color = ifelse(person_gender =="Female", hue_pal()(2)[1], hue_pal()(2)[2])
      person_age = filter(TT, PER_CODE == person_to_look_at)$Age[1]
      person_tbsa = filter(TT, PER_CODE == person_to_look_at)$TBSA[1]
-
+     
      data.ind <- reactive({
-                      SharedData$new(
-                        filter(TT, PER_CODE == person_to_look_at) %>% 
+                      #SharedData$new(
+       
+                        data = filter(TT, PER_CODE == person_to_look_at) %>% 
                         select(c(vital_vars, "Blood_test_performed", "Blood", "Any", "Urine", "Pneumonia", "Wound", "study outcome abbr.")) %>%
-                        #select(-one_of("V_ER_DEF_DATE_01","V_TIME_PERFORMED")) %>%
                         melt(id=c("V_DATE_COLLECTION", "V_TIME_PERFORMED_1", "V_TIME_PERFORMED_2", "V_TIME_PERFORMED_3",
                                   "Blood_test_performed", "Blood", "Any", "Urine", "Pneumonia", "Wound", "study outcome abbr."))
-                      )  
+                      
+                      # ~V_DATE_COLLECTION
+                      #)  
                 })
      
-     ind.plot = ggplot(data.ind()$origData(), aes(x = V_DATE_COLLECTION, y = value, group = variable)) +
-       geom_line(inherit.aes = TRUE, size = .3, aes(color = `study outcome abbr.`)) + 
-       geom_point(data = filter(data.ind()$origData(), !is.na(Blood_test_performed)),
-                  aes(fill = Blood_test_performed), stroke = .1, size = 1) +
-       scale_fill_manual(values = c("#a1dab4", "#225ea8", "#41b6c4"))
-
+     #ind.plot = lapply(lapply(split(data.ind()$data(), data.ind()$data()$variable), SharedData$new, group = "ind"),  function(x) {
+       
+     ind.plot = ggplot(data.ind(), aes(x = V_DATE_COLLECTION, y = value, group = variable)) +
+        geom_line(inherit.aes = TRUE, size = .3, aes(color = `study outcome abbr.`)) + 
+        geom_point(data = filter(data.ind(), !is.na(Blood_test_performed)),
+                  aes(fill = Blood_test_performed), stroke = .1, size = 2, shape = 23, alpha = .8) +
+        scale_fill_manual(values = c("Blood CBC" = "#d8b365",
+                                     "Blood CBC and Chemistry" = "#225ea8",
+                                      "Blood Chemistry" = "#41b6c4"), breaks=levels(TT$Blood_test_performed))
        
        if (sum(grepl(pattern = "Any", input$infection_type))) {
-            ind.plot = ind.plot + geom_point(data = filter(data.ind()$origData(), Any=="Yes"), 
+            ind.plot = ind.plot + geom_point(data = filter(data.ind(), Any=="Yes"), 
                   inherit.aes = TRUE,
                   fill = "black", stroke = .1, shape = 21, size = 2)
        }
      
        if (sum(grepl(pattern = "Urine", input$infection_type))) {
-         ind.plot = ind.plot + geom_point(data = filter(data.ind()$origData(), Urine), 
+         ind.plot = ind.plot + geom_point(data = filter(data.ind(), Urine), 
                   inherit.aes = TRUE,
                   fill = "orange", stroke = .1, shape = 21, size = 2)
        }
      
        if (sum(grepl(pattern = "Pneumonia", input$infection_type))) {
-         ind.plot = ind.plot + geom_point(data = filter(data.ind()$origData(), Pneumonia), 
+         ind.plot = ind.plot + geom_point(data = filter(data.ind(), Pneumonia), 
                   inherit.aes = TRUE,
                   fill = "gray", stroke = .1, shape = 21, size = 2)
        }
      
        if (sum(grepl(pattern = "Wound", input$infection_type))) {
-         ind.plot = ind.plot + geom_point(data = filter(data.ind()$origData(), Wound), 
+         ind.plot = ind.plot + geom_point(data = filter(data.ind(), Wound), 
                   inherit.aes = TRUE,
                   fill = "purple", stroke = .1, shape = 21, size = 2)
        }
      
        if (sum(grepl(pattern = "Blood", input$infection_type))) {
-         ind.plot = ind.plot + geom_point(data = filter(data.ind()$origData(), Blood == "TRUE"),
+         ind.plot = ind.plot + geom_point(data = filter(data.ind(), Blood == "TRUE"),
                   inherit.aes = TRUE,
                   fill = "red", stroke = .1, size = 2, shape = 21)
        }
        
        ind.plot = ind.plot + 
+             theme_bw() + 
              theme(legend.position = "top", 
              axis.text.x = element_blank(), #element_text(hjust = 1, angle = 90),
              legend.text = element_text(size = 8),
-             strip.text = element_text(size = 9),
+             strip.text = element_text(size = 11),
              strip.background = element_blank(),
              #panel.border = element_rect(color = person_gender_color, fill = NA, size = .5)
-             plot.title = element_text(size = 12, family = "sans-serif")
-             ) + 
-       guides(color = FALSE, fill = FALSE) + 
-       ggtitle(paste("Individual vitals for", person_to_look_at, "\tTBSA: ", person_tbsa, "\tAge: ", person_age, "\tGender: ", person_gender)) +
-       facet_wrap(~variable, scales = "free_y")
-     
-     ggplotly(ind.plot, tooltip = c("x", "y")) %>%
-       layout(margin = list(0,0,0,0,1), showlegend = FALSE) %>%
-       highlight(on = "plotly_selected", off = "plotly_deselect")
+             plot.title = element_text(size = 12, family = "Helvetica")) + #guides(color = FALSE) + 
+         ggtitle(paste("Individual vitals for", person_to_look_at, "\tTBSA: ", person_tbsa, "\tAge: ", person_age, "\tGender: ", person_gender))
+       
+        # Add faceting
+       ind.plot = ind.plot +
+         facet_wrap(~variable, scales = "free_y")
+         #facet_trelliscope(~ variable, ncol = 4, nrow = 6, as_plotly = TRUE, plotly_args = list(highlight = list(on = "plotly_selected"), hidelegend = TRUE))
+        
+       # Add plotly
+       # ind.plot = ggplotly(ind.plot, tooltip = c("x", "y")) %>%
+        # layout(margin = list(0,0,0,0,1), showlegend = FALSE) %>%
+        # highlight(on = "plotly_selected", off = "plotly_deselect") %>% hide_legend()
+
+       ind.plot
+      # }) 
    })
    
    demo.ind = reactive({filter(TT_Demo1, Patient.ID == person_to_look_at) %>% 

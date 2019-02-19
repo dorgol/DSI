@@ -58,8 +58,25 @@ ui <- fluidPage(
                       "White Blood Cells" = "V_WHITE_BC",
                       "Glucose" = "V_GLUCOSE",
                       "Sodium" = "V_SODIUM",
-                      "Potassium" = "V_POTASSIUM"
-                      ), selected = "V_TEMPERATURE"), 
+                      "Potassium" = "V_POTASSIUM",
+                      "BP_Systolic" = "V_PB_SYSTOLIC",
+                      "BP_Diastolic" =  "V_BP_DIASTOLIC",
+                      "Mean Arterial Pressure" = "V_MEANARTERIAL_PRESSURE",  
+                      "Central Veneous Pressure" = "V_CENTRAL_VENOUS_PRESSURE",
+                      "Respiratory Rate" = "V_RESPIRATORY_RATE",     
+                      "PAO2" = "V_PAO2",      
+                      "FI02" = "V_FIO2",   
+                      "PACO2" =  "V_PACO2", #Correlated with HC03  (see burn_data_EDA.R)     
+                      "HC03" = "V_HCO3",    
+                      "Blood Urea Nitrogen" = "V_BLOOD_UREA_NITROGEN", # COrrelated with Creatinine
+                      "Creatinine" = "V_CREATININE",   
+                      "Hemogolobin" = "V_HEMOGLOBIN",  # highly correlated to Hematocrit
+                      "Hematocrit" = "V_HEMATOCRIT",   
+                      "Glascowcoma Scale" = "V_GLASCOWCOMA_SCALE", 
+                      "MODS_Score" = "V_MODS_SCORE", 
+                      "PH" = "V_PH",
+                      "Bilirubin" = "V_BILIRUBIN"),
+                    selected = "V_TEMPERATURE"), 
         
         checkboxGroupInput("outcome", "Study Outcome:",
                     selected = "Completed protocol",

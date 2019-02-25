@@ -6,56 +6,68 @@ output:
   ioslides_presentation:
     incremental: false
 ---
+<!-- To do: simplify code to minimal examples/remove dependencies e.g. emojifont-->
 
 ## Goals
 
-Present logic and tools for interactively plotting *static* data. 
+Present logic and tools for interactively plotting *static* data
 
-In two weeks we'll discuss Shiny, where data can be *dynamic*.
+In two weeks we'll discuss Shiny, where data can be *dynamic*
 
 - When to use interactivity
-- Work through an examples with
+- Work through examples with
     - Plotly  
     - Crosstalk  
 - Other packages, RBokeh, Highcharter  
+- What's going on on under the hood
 
 <!--look more into leaflet-->
 <!-- which ones have ability to write your own js to add to event handlers-->
 
-
 ## Why Interactive Plots?
 
 > - ~~They look cool~~
-> - Exploratory, especially valuable EDA, your own or the users.
-    + Plots you publish have an argument, focus reader attention.
-> - Browser-based, easy to share, few compatibility issues.
+> - ~~They reduce decision-making~~
+> - Exploratory data analysis, your own or the user's
+    + Plots you publish have an argument, focus reader attention
+> - Browser-based, easy to share, few compatibility issues
 > - Expose the data
 > - Increase the amount of information you can share cleanly
 > - Brushing and linking
     + Draw connections between data
     + Uncover relationships
+> - You may not need shiny
 
 <!-- Best practices for interactivity. One slide? Sprinkled throughout? -->
 
-## Example - Pizza to the Polls
+## Motivating example: Pizza to the Polls {.smaller}
 
-[Pizza to the polls](https://polls.pizza/) - Delivered over 10,000 pizzas to 41 states    
+**[Pizza to the polls](https://polls.pizza/)**    
+Delivered over 10,000 pizzas to 41 states    
 Data from 2018 midterm elections
 
-<!-- I used google map API to get lat/long, standardized variable names, removed some unnecessary fields,
-("X", "Other.Info", "Contact.Info", "Slack.Thread", "Pizza.phone.number", "Slack.ID", "Twitter.Thread", "Tweet.ID"),
-and removed 14 missing-address rows from the original data -->
+The data is in the intro_to_interactive folder. Load it as below and view fields.
 
-```{r setup, echo = F, cache = T, warning = F, messsage = F}
-library(dplyr)
+```{r setup, echo = F, cache = T, warning = F, messsage = F, results = "hide"}
+
 library(ggplot2)
 library(plotly)
 library(crosstalk)
+library(highcharter)
+library(rbokeh)
+library(DT)
+library(listviewer)
+
+library(dplyr)
+library(sf)
+library(forcats)
+library(reshape2)
 library(emojifont)
 library(USAboundaries) #has state, county, congressional district and other shape files
 library(USAboundariesData)
-library(sf)
 
+#devtools::install_github("dkahle/ggmap") #avolids bugs
+#library(ggmap)
 #library(ggrepel)
 #library(stringr)
 #library(grDevices)
@@ -63,71 +75,105 @@ library(sf)
 
 ```
 
+<!-- I used google map API to get lat/long, standardized variable names.
+From the original data shared with me I removed some unnecessary fields,
+("X", "Other.Info", "Contact.Info", "Slack.Thread", "Pizza.phone.number", "Slack.ID", "Twitter.Thread", "Tweet.ID"),
+removed 14 missing-address rows, reformatted dates and filtered down to just 2018 midterms -->
 
 ```{r load, cache = F}
-setwd("~/Documents/DSI/intro_to_interactive")
-pizza = read.csv("pizza.csv") #2534 x 13
-names(pizza); dim(pizza)
+setwd("~/Documents/DSI/intro_to_interactive") # UPDATE path to intro_to_interactive
+pizza = read.csv("pizza_midterms.csv")
+names(pizza) # We're interested in a subset of these fields
 ```
+
+We introduce some concepts using the texas housing (`txhousing`) data that's packaged with plotly. This data set has information on median housing prices and other sales information (volume, listing, inventory) over time for cities in Texas. 
 
 ## Pizza data {.smaller}
 
 ```{r}
-head(pizza, 4)
+head(pizza, 3)
 ```
-
-## How to visualize this data? {}
-
-Questions we have:
-- Where were pizzas delivered? 
-- When were pizzas delivered? Relative to poll-closing times?
-- What describes places where people wait on lines?
 
 ## Example - Static Plot
 
-```{r static_plot}
+Here is a static plot built in ggplot. What is it lacking?
 
-pizza.grouped.all = pizza %>% group_by(lat, lon) %>% 
-  summarize(pizzas_delivered = sum(Number_of_pizzas, na.rm = T),
-            polling_place = first(Polling_place_address),
-            city = first(City))
+```{r data_pre_process, cache = T, echo = F, results = "hide"}
+
+# Group by location
+pizza.grouped = pizza %>% group_by(lat, lon, Status) %>% 
+  summarize(Pizzas_delivered = sum(Number_of_pizzas, na.rm = T),
+            Polling_place = first(Polling_place_address),
+            City = first(City), # note there are some errors in city and state
+            State = first(State))
 
 #remove USA from polling place address
-pizza.grouped.all$polling_place = gsub(", USA", "", pizza.grouped.all$polling_place)
-pizza.grouped.all$image = "/Users/jac/Documents/DSI/DSI_repo/proposition_fest/pizza_icon_small.png"
-pizza.grouped.all$pizza = emoji('pizza')
+pizza.grouped$Polling_place = gsub(", USA", "", pizza.grouped$Polling_place)
+pizza.grouped$pizza = emoji(ifelse(pizza.grouped$Status == "Delivered", "pizza", "grey_question"))
+```
 
-plot1 = ggplot(pizza.grouped.all, aes(x = lon, y = lat, size = pizzas_delivered)) + 
-          geom_point(color = "red", alpha = .5) + 
-          ggtitle("Delivery locations (By unique polling places -- some overlap)")
-
-plot1
+```{r geographic_boundaries, cache = T, results = "hide", echo = F}
 
 us.state = us_boundaries(type = "state")
-
-plot2 = ggplot(data = pizza.grouped.all, aes(x = lon, y = lat, size = pizzas_delivered)) + 
-          ylim(24,75) + xlim(-175, -67) +
-          geom_sf(data = us.state, inherit.aes = FALSE) +
-          geom_point(color = "red", alpha = .5) + 
-          ggtitle("Delivery locations (By unique polling places -- some overlap)")
-
-plot2
-
+us.congressional = us_boundaries(type = "congressional")
 
 ```
 
+```{r static_plots, cache = T, echo = F}
 
-Here is a static plot built in ggplot. It looks OK, but what is it missing?
+# No geographcy
+plot1 = ggplot(pizza.grouped, aes(x = lon, y = lat, size = Pizzas_delivered)) + 
+          geom_point(aes(color = Status), alpha = .5) +
+          ggtitle("Pizza to the polls 2018 midterms: Locations of deliveries and reports")
 
-## Example - Interactive Plot
+# Geography
+plot2 = ggplot() + 
+          geom_sf(data = us.state, inherit.aes = FALSE) +
+          geom_sf(data = us.congressional, lwd = .3, fill = NA) +
+          ylim(24,75) + xlim(-175, -67) +
+          geom_point(data = pizza.grouped, aes(x = lon, y = lat, size = Pizzas_delivered, color = Status), alpha = .5) + 
+          ggtitle("Pizza to the polls 2018 midterms: Locations of deliveries and reports")
 
-<!--Pizza plot or other example -->
+# Geography -  Pizza only
 
-## Example - Linked Interactive Plot
+plot3 = ggplot() + 
+          geom_sf(data = us.state, inherit.aes = FALSE) +
+          geom_sf(data = us.congressional, lwd = .3, fill = NA) +
+          ylim(24,75) + xlim(-175, -67) +
+          geom_point(data = filter(pizza.grouped, Status == "Delivered"),
+                     aes(x = lon, y = lat, size = Pizzas_delivered), color = "red", alpha = .5) + 
+          ggtitle("Pizza to the polls 2018 midterms: Locations of pizza deliveries")
 
-```{r election_data}
+plot3
+```
 
-# 5. Election data
+## How to visualize this data? {.smaller}
+
+That depends on what we're interested in showing.
+
+Specific questions:
+
+- Where were pizzas delivered? <- **our focus**
+- When were pizzas delivered? Relative to poll-closing times?
+
+Contextual question:
+
+- What describes places where people wait on lines?
+
+Some hypotheses:
+
+- Longer lines in cities, densely populated areas
+- Longer lines in states with close elections
+- Longer lines in states without vote-by-mail
+- More deliveries in democratic-leaning locations (Pizza to the polls network)
+- Influence of vote suppression, voter ID laws
+
+Deep exploration of the data is helpful in refining hypotheses.    
+We expect these effects to be non-uniform effects -- complex models.
+
+```{r election_data, eval = F}
+
+As of January 30, 2018, Colorado, Oregon, and Washington conducted all elections using a vote-by-mail system (via ballotpedia).
 
 # NOT the elections package on cran - https://github.com/MEDSL/elections/blob/master/README.md
 # make sure devtools is updated
@@ -143,56 +189,500 @@ Here is a static plot built in ggplot. It looks OK, but what is it missing?
 # local_precincts_2016
 
 library(elections)
-data("presidential_precincts_2016")
-head(presidential_precincts_2016)
 
-pres_by_state_returns_2016 = presidential_precincts_2016 %>% group_by(state_postal, party) %>%
+# Show percent dem by state for 2016 presidential election:
+
+data("presidential_precincts_2016"); head(presidential_precincts_2016)
+
+pres_by_state_returns_2016 = presidential_precincts_2016 %>% 
+  group_by(state_postal, party) %>%
   summarize(party_votes = sum(votes))
 
-state_2party = left_join(pres_by_state_returns_2016 %>% filter(grepl(party, pattern="[D|d]emocrat")), pres_by_state_returns_2016 %>% filter(grepl(party, pattern="[R|r]epublican")), by = "state_postal")
-state_2party = state_2party %>% group_by(state_postal) %>% summarize(votes.dem = sum(party_votes.x), votes.rep = sum(party_votes.y))
+state_2party = left_join(pres_by_state_returns_2016 %>% filter(grepl(party, pattern="[D|d]emocrat")),
+                         pres_by_state_returns_2016 %>% filter(grepl(party, pattern="[R|r]epublican")), by = "state_postal")
 
-us.state = us_boundaries(type = "state")
-us.state = left_join(us.state,
-                     state_2party,
-                     by = c("state_abbr" =  "state_postal")) %>% mutate(percent_dem = votes.dem/(votes.dem + votes.rep))
+state_2party = state_2party %>% 
+  group_by(state_postal) %>% 
+  summarize(votes.dem = sum(party_votes.x), votes.rep = sum(party_votes.y))
 
-plot3 = ggplot(data = pizza.grouped.all, aes(x = lon, y = lat, size = pizzas_delivered)) + 
+us.state.dem = left_join(us.state, state_2party, by = c("state_abbr" =  "state_postal")) %>% 
+  mutate(percent_dem = votes.dem/(votes.dem + votes.rep))
+
+
+plot3 = ggplot(data = pizza.grouped, aes(x = lon, y = lat, size = Pizzas_delivered)) + 
           ylim(24,75) + xlim(-175, -67) +
-          geom_sf(data = us.state, aes(fill =  percent_dem), inherit.aes = FALSE) +
+          geom_sf(data = us.state.dem, aes(fill =  percent_dem), inherit.aes = FALSE) +
           scale_fill_gradient(low = "white", high = "black", limits = c(0,1)) + 
           geom_point(color = "red", alpha = .5) + 
           ggtitle("Delivery locations (By unique polling places -- some overlap)")
 
 plot3
 
+# Show percent dem by congressional district for 2016 presidential election:
+
+data("house_precincts_2016"); head(house_precincts_2016)
+
+
+head(us_congressional())
+
+# lm ----
+#polling places listed by state
+View(pizza.grouped %>% group_by(state) %>% summarize(n()))
+View(filter(pizza.grouped, Status == "Delivered") %>% group_by(state) %>% summarize(n()))
+View(filter(pizza.grouped, Status == "Delivered") %>% group_by(state) %>% summarize(sum(Pizzas_delivered)))
+
+pizza.grouped.lm = left_join(pizza.grouped, us.state.dem[,c("state_abbr", "percent_dem")], by = c("state"= "state_abbr")) %>% ungroup() %>% filter(!is.na(percent_dem), Status == "Delivered")
+lm1 = lm(Pizzas_delivered ~ percent_dem + state, data = pizza.grouped.lm)
+summary(lm1)
+
+```
+
+## Interactive Plotting with Plotly
+
+Plotly is [...]
+
+- A major selling point is compatibility with ggplot
+    + Can build a plot and add interactivty if needed
+- Compatible with many HTML widgets
+  
+Read this guide! https://plotly-book.cpsievert.me/index.html
+
+## Example - Texas housing data {.smaller}
+
+Enter this code in the console:
+
+```{r texas_housing_plotly, eval = F, echo = T}
+
+names(txhousing)
+
+tx.ggplot = ggplot(txhousing) + 
+              geom_line(aes(x = interaction(month, year), y = median,
+                            group = city, color = city)) +
+              theme(axis.text.x = element_text(angle = 90))
+
+tx.ggplotly = ggplotly(tx.ggplot, tooltip = c("x", "median", "group")) 
+
+
+tx.ggplotly
+```
+
+- The `ggplotly` function easily adds interactivity to `ggplot` 
+
+- We can refer to "x" and "y" in the tooltip by x and y or their assigned variables names. ("city" tooltip would be duplicated.)
+
+## Structure of plots in Plotly {.smaller}
+
+- Like ggplot, plots are built in layers
+    + `ggplotly` translates a ggplot layer into one or more plotly.js **traces**
+    + Every trace has a **type**, and the default is "scatter"
+    + instead of `aes` we use `~`
+    + There is default behavior for how to translate certain layer types, but you can usually customize it.
+- Data-plot-pipeline
+    + Plots have data attached
+- View plot structure (https://plotly-book.cpsievert.me/extending-ggplotly.html#modifying-layers)
+    + This is very helfpul for diagnosing problems 
+    + For example, it helped me figure out where legends were being turned off
+  
+## Three ways to build plots in Plotly {.smaller}
+
+1. Build the plot in `ggplot` and convert it to plotly with `ggplotly`
+2. Start the plot in `ggplot`, convert and add elements in `plotly`
+  - Useful for doing things in the easier syntax
+3. Build the whole thing in plotly (`plot_ly`)
+
+ *"The initial inspiration for the plot_ly() function was to support plotly.js chart types that ggplot2 doesn’t support...This newer “non-ggplot2” interface to plotly.js is currently not, and may never be, as fully featured as ggplot2."*"   
+ 
+- https://plotly-book.cpsievert.me/two-approaches-one-object.html
+ 
+- Examples of unsupported `ggplot` types: 3D surface and mesh plots.
+
+## Example - Three ways to build plotly {.smaller}
+
+open options_to_build_plotly.R
+
+## Exercise - Build a plotly in three ways
+
+Create three versions of an interactive plot using these methods for the `txhousing` data set which is loaded with plotly. 
+
+Ask questions and consult https://plotly-book.cpsievert.me/a-case-study-of-housing-sales-in-texas.html for help as needed. 
+
+## Customizing plotly output
+
+```{r}
+
+#color/colors, symbol/symbols, linetype/linetypes, size/sizes - These arguments are unique to the R package 
+
+#layout() function used earlier
+
+#Editing traces after plotly conversion
+#style() function
+
+#plotly_json(tx.ggplotly)
+```
+
+## The data-plot-pipeline {.smaller}
+
+```{r tx_housing_pipeline, eval = F, echo = T}
+
+tx.ggplotly2 = 
+  tx.ggplotly %>%
+  group_by(interaction(month, year)) %>%
+  summarize(overall_med = median(median, na.rm = T)) %>% 
+  add_lines(y = ~overall_med, color = I("black"), size = I(3), name = "overall_med")
+
+tx.ggplotly2
+
+plotly_json(tx.ggplotly2)
+plotly_data(tx.ggplotly2, id = 2)
+plotly_data(tx.ggplotly2, id = 3); names(plotly_data(tx.ggplotly2))
+```
+
+Branch off with `add_fun`. Or save function and call with city name as argument.
+
+```{r tx_housing_pipeline2, eval = F, echo = T}
+
+tx.ggplotly %>%
+  add_fun(function(plot) {
+    plot %>% ungroup() %>% filter(city == "Houston") %>%
+      add_lines(y = ~median, name = "Houston", color = I("black"))
+  }) %>%
+  add_fun(function(plot) {
+    plot %>% ungroup() %>% filter(city == "San Antonio") %>%
+      add_lines(y = ~median, name = "San Antonio", linetype = I(3))
+  }) 
+```
+<!--Sometimes the directed acyclic graph property of a pipeline can be too restrictive for certain types of plots. In this example, after filtering the data down to Houston, there is no way to recover the original data inside the pipeline. The add_fun() function helps to work-around this restriction3 – it works by applying a function to the plotly object, but does not affect the data associated with the plotly object. https://plotly-book.cpsievert.me/a-case-study-of-housing-sales-in-texas.html -->
+
+## Additional features
+
+Add a slider to control the time range of data in the plot 
+
+```{r pizza_rangeslider, eval = F, cache = T, echo = T}
+
+tx.ggplotly2 %>% 
+  rangeslider(start = 1, end = length(tx.ggplotly2$x$data[[1]]$x))
+
+```
+
+[One or two more?]
+
+## Example - Interactive pizza plot
+
+**What is still lacking?**
+
+```{r interactive_plot, cache = T, echo = F, warning = F, message = F, fig.keep = "last"}
+
+# First build the map plot (we'll use it later)
+pizza.map = ggplot() + 
+  geom_sf(data = us.congressional, lwd = .1) +   
+  geom_sf(data = us.state, lwd = .3, fill = "darkgray", alpha = .5) +
+  ylim(24,75) + xlim(-175, -67)
+
+# Add points
+pizza.points = pizza.map + 
+  geom_text(data = filter(pizza.grouped %>% ungroup(), Status != "Delivered"),
+            aes(x = lon, y = lat, label = pizza, label1 = City, label2 = Polling_place, label3 = Status), alpha = 1) +
+  geom_text(data = filter(pizza.grouped %>% ungroup(), Status == "Delivered"), 
+            aes(x = lon, y = lat, size = Pizzas_delivered, label = pizza, label1 = City, label2 = Polling_place, label3 = Status), alpha = 1)
+#we incuded bad label aesthetics so they'd show up in the tool tip
+
+# Clean it up
+pizza.points = pizza.points +   
+  theme_bw() + 
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        panel.background = element_rect(fill = "#FEEDAB")) +
+  ggtitle("Pizza to the polls 2018 midterms: Locations of deliveries and reports")
+
+# Convert to plotly
+plotly.map.emoji = ggplotly(pizza.points, tooltip = c("Pizzas_delivered", "City", "Polling_place", "Status")) %>%
+  layout(showlegend = TRUE, legend  = list(font = list(family = "EmojiOne"))) %>%
+  style(traces = 4, name = "other report type \u2754", showlegend = TRUE) %>%
+  style(traces = 5, name = "pizzas delivered \U0001f355", showlegend = TRUE) %>%
+  layout(legend = list(bgcolor="#FEEDAB"))
+
+plotly.map.emoji
+
+#plotly_json(plotly.map.emoji)
 
 ```
 
 
-<!--Pizza plot or other example -->
+## Linked plotting {.smaller}
+
+- Linking plots allows comparisons across different representations to find patterns.
+
+- Use the `SharedData` class from the `crosstalk` package (https://rstudio.github.io/crosstalk/index.html) 
+
+- This example shows where missing data appears in a time serie (https://plotly-book.cpsievert.me/linking-views-without-shiny.html#fig:pipeline-gif)
+```{r texas_housing_linked, eval = F, echo = T, cache = T, warning = F, message = F}
+
+sd <- SharedData$new(txhousing, ~city, "Select a city")
+
+base <- plot_ly(sd, color = I("black"), height = 400) %>% group_by(city)
+
+p1 <- base %>%
+  summarise(miss = sum(is.na(median))) %>% 
+  filter(miss > 0) %>%
+  add_markers(x = ~miss, y = ~fct_reorder(city, miss), hoverinfo = "x+y") %>%
+  layout(barmode = "overlay", xaxis = list(title = "Number of months missing")) 
+
+p2 <- base %>% add_lines(x = ~date, y = ~median, alpha = 0.3)
+
+subplot(p1, p2, titleX = TRUE, widths = c(0.3, 0.7)) %>% hide_legend() %>%
+   highlight(dynamic = TRUE, selectize = TRUE)
+```
 
 
-<!--  Closeness of election outcomes --> 
-<!-- filters on pizzas to show --> ?
+## Arranging linked plots 
+- `subplot` in plotly   
+    + A plotly `subplot` is a single plotly graph with multiple traces anchored on different axes    
+    + subplot returns a plotly object, so it can be applied recursively (can have subplots within subplots)    
+    + Underneath the hood in `plotly`, `ggplot2` facets (e.g. from `facet_wrap`) are implemented as subplots, which enables the synchronized zoom events on shared axes
+    + [plotly-book.cpsievert.me/merging-plotly-objects.html](https://plotly-book.cpsievert.me/merging-plotly-objects.html)
+- `bscols` in crosstalk
+- `tagList`, `tags$div` in htmltools
+- `fluidPage` from Shiny
 
-## Live Example
 
-<!-- Now we code an example ourselves (leave presentation). Stay with pizza example and data?-->
+## Other widgets - adding a data table with DT {.smaller}
 
-## Review - Advantages of Plotly
+The `DT` package, an interface to the JavaScript library DataTables.
 
-## Review - Limitations of Plotly
+The main function in this package is datatable(). It creates an HTML widget to display R data objects with DataTables.
+
+```{r data_table, cache = T, eval = T, echo = T, message = F, warning = F, results = "asis"}
+DT::datatable(pizza.grouped, selection = "multiple")
+```
+
+Organizing our data by number of pizzas delivered helps us find patterns in where pizzas were delivered.
+Most of the top locations are big cities, but some aren't easily recognizable like Norwalk.
+
+
+## Linking with plotly, pizza example
+
+```{r linked_plot, cache = T, eval = F, echo = F, warning = F, message = F}
+
+# Make necessary shared data sets ----
+
+# Restrict to deliveries made and add a y variable for later
+pizza.grouped.delivered = filter(pizza.grouped, Status == "Delivered") %>%
+                            mutate(ID = Polling_place) %>%
+                            group_by(Pizzas_delivered) %>% mutate(y = 1:n()) %>% ungroup()
+  
+shared_pizza_delivered = SharedData$new(pizza.grouped.delivered, key = ~ID, group = "pizza_shared")
+
+# Main plot with shared data ----
+plot.map.emoji = ggplot() + 
+  # map
+  geom_sf(data = us.state, lwd = .5, fill = NA) +
+  geom_sf(data = us.congressional, lwd = .1) + 
+  # points
+  geom_text(data = shared_pizza_delivered, 
+            #non-functioning aes label1 and label2 to pass these variables to plotly for the tooltip
+            aes(x = lon, y = lat, size = Pizzas_delivered, label = pizza, label1 = City, label2 = Polling_place),
+            alpha = 1) +
+  ylim(24,75) + xlim(-175, -67) +
+  theme_bw() + 
+  theme(axis.title.x = element_blank(), axis.title.y = element_blank()) +
+  ggtitle("Delivery locations")
+
+plotly.map.emoji = ggplotly(plot.map.emoji, tooltip = c("size", "City", "Polling_place")) %>%
+  highlight(on = "plotly_selected", off = "plotly_deselect") #can't seem to get click and selected
+
+# Dotplot for right bar ----
+#   I had issues with geom_dotplot converting to plotly so switched to geom_point
+
+dotplot.pizzas.delivered = ggplot(shared_pizza_delivered) +
+  geom_point(aes(x = Pizzas_delivered, y = y, group = Polling_place), size = .5) +
+  ylab("Count") + 
+  #optional theme changes
+  theme_bw() 
+
+plotly.pizzas.delivered = 
+  ggplotly(dotplot.pizzas.delivered, tooltip = c("x","group")) %>% #use "key" or "group" but group gives a nicer label
+  highlight(on = "plotly_selected", off = "plotly_deselect", opacityDim = 1) 
+
+#   Table for right bar ----
+
+pizza.datatable = datatable(shared_pizza_delivered, group = "pizza_shared")
+
+# Panel plot ----
+pizza_linked = bscols(widths = c(8,4,4), plotly.map.emoji, plotly.pizzas.delivered, pizza.datatable)
+
+htmltools::save_html(pizza_linked, file = "pizza_linked.html")
+```
+
+```{r linked_plot_html, echo = F}
+htmltools::includeHTML("file:///Users/janecarlen/Documents/DSI/intro_to_interactive/pizza_linked.html")
+```
+
+<!-- probably going to leave this out, won't have time-->
+```{r pizza_time, eval = F, echo = F}
+
+# Do static plots first!
+ggplot(pizza_hourly) +
+  geom_bin2d(aes(x = lon, y = Timestamp_hour))
+
+plot(pizza_hourly$Timestamp_hour, pizza_hourly$lat)
+
+# Process data ----
+pizza_hourly = pizza %>% filter(!is.na(Number_of_pizzas)) %>%
+          group_by(Timestamp_hour) %>% 
+          arrange(Timestamp_date, Number_of_pizzas) %>%
+          mutate(n_hour = 1:n()) %>%
+          ungroup()
+
+shared_pizza_hourly = SharedData$new(pizza_hourly)
+
+# Map plot ----
+
+plot.map.point = ggplot() + 
+  # map
+  geom_sf(data = us.state, lwd = .5, fill = NA) +
+  geom_sf(data = us.congressional, lwd = .1) +  
+  # points
+  geom_point(data = shared_pizza_hourly, 
+            #non-functioning aes label1 and label2 to pass these variables to plotly for the tooltip
+            aes(x = lon, y = lat, size = Number_of_pizzas, color = Timestamp_hour,
+                    label1 = City, label2 = Polling_place_address), alpha = .5) +
+  ylim(24,75) + xlim(-175, -67) +
+  theme_bw() + 
+  scale_color_distiller(palette = "YlGnBu", direction = -1) +
+  scale_size_continuous(range = c(1,1)) +
+  guides(color = "none") +
+  theme(axis.title.x = element_blank(), axis.title.y = element_blank()) +
+  ggtitle("Delivery locations")
+
+plotly.map.point = ggplotly(plot.map.point) %>% highlight(on = "plotly_selected", off = "plotly_deselect") %>%
+  layout(legend = list(orientation = 'h'))
+
+#display.brewer.all()
+
+# Dot plot ----
+# Only show actual deliveries in the "dotplot"
+
+pizza_hourly_ggplot = ggplot(shared_pizza_hourly) + 
+  geom_point(aes(x = Timestamp_hour, y = n_hour, color = Timestamp_date, size = Number_of_pizzas), shape = 20) +
+  scale_size_continuous(range = c(1,1)) +
+  scale_color_brewer(type = "seq", palette = "Spectral") +
+  theme_bw()
+
+pizza_hourly_ggplotly = ggplotly(pizza_hourly_ggplot, tooltip = c("Number_of_pizzas")) %>%
+                          highlight(on = "plotly_selected", off = "plotly_deselect") 
+
+# Grouped plot ----
+bscols(widths = c(6,6), plotly.map.point, pizza_hourly_ggplotly)
+```
+
+## Review - Advantages and Limitations
+
+- Newer code, still under development. Unexpected limitations and bugs.
+- Related Packages - Bokeh (rbokeh), Highcharts (highcharter), rCharts, and more
 
 ## Related Packages - Bokeh
 
-## Related Packages - Highcharter
+Plotting begins with `figure()`
+Add layers, `ly_*`
+- http://hafen.github.io/rbokeh/rd.html
+- unlike ggplot2, we do not attach a default data set when we call `figure()`, 
+    + data is explicitly specified for each layer.
+One strength, easy to customize interactivity
+- Many tools available for different types of interaction. 
+- Tools easily added through the `tools` argument to `figure()`, a vector of tool names, or `tool_` functions.
+    + If the latter, some tools have additional parameters for finer control
+    
+```{r bokeh, cache = T, eval = F, echo = T}
 
-## Related Packages - rCharts
+p <- figure() %>%
+  ly_points(Sepal.Length, Sepal.Width, data = iris,
+            color = Species, glyph = Species,
+            hover = list(Sepal.Length, Sepal.Width))
+
+z <- lm(dist ~ speed, data = cars)
+p <- figure(width = 600, height = 600) %>%
+  ly_points(cars, hover = cars) %>%
+  ly_lines(lowess(cars), legend = "lowess") %>%
+  ly_abline(z, type = 2, legend = "lm")
+p
+
+p <- figure()
+class(p) #"rbokeh"   "htmlwidget"
+
+#vs. 
+g <- ggplot()
+class(g)
 
 
+figure(tools = "pan") %>%
+  ly_points(Sepal.Length, Sepal.Width, data = iris, color = Species) %>%
+  tool_box_select() %>%
+  tool_lasso_select()
 
-## Part II - Under the hood (Duncan)
+figure() %>% ly_crect(data = mtcars, x = gear, y = cyl)
 
-- What is plotly actually doing -- relationship between R, html, javascript
-- What kinds of backends (html, server, server running R) can be how and how do they work?
+```
+
+## Related Packages - Highcharter {.smaller}
+
+Plotting begins with `highchart()` or `hchart`
+- ggplot2 syntax elements:
+- hchart function (like qplot)
+- hcaes (like aes)
+Add layers, with `hc_add_series`: https://api.highcharts.com/highcharts/series
+
+Example scatter plot code:
+```{r highcharter, cache = T, eval = F, echo = T}
+highchart() %>% hc_add_series(txhousing, "scatter", hcaes(x = listings, y = sales)) 
+
+hchart(txhousing, "point", hcaes(x = listings, y = sales, group = city))
+
+class(Last.value) #"highchart"  "htmlwidget"
+```
+<!-- undesirable things:  color doesn't work to add color, adding group in the highchart vs. hchart syntax produces different effects --->
+
+## Review - Comparison of package heatmaps {.smaller}
+
+```{r heatmap comparison, echo = T, eval = F}
+
+# Create a (time-flattened) correlation matrix of median city housing prices to show in heatmaps
+txhousing.heatmap.data = txhousing %>%
+  mutate(time = as.character(interaction(year, month))) %>%
+  select("city", "time", "median") %>%
+  dcast(time ~ city, na.rm = T, value.var = "median") %>%
+  select(-c("time")) %>%
+  cor(use = "pairwise.complete.obs")
+
+# base
+image(as.matrix(txhousing.heatmap.data))
+
+# ggplot
+ggplot(melt(txhousing.heatmap.data)) + geom_tile(aes(x = Var1, y = Var2, fill = value))
+
+# plotly
+ggplotly(ggplot(melt(txhousing.heatmap.data)) + geom_tile(aes(x = Var1, y = Var2, fill = value)))
+
+# highcharter
+hchart(melt(txhousing.heatmap.data), "heatmap", hcaes(x = Var1, y = Var2, value = value))
+
+# rbokeh
+figure(width = 600) %>% ly_crect(data = melt(txhousing.heatmap.data), x = Var1, y = Var2, color = value)
+
+```
+
+
+## Part II - Under the hood (Duncan) {.smaller}
+
+- General:
+- What is plotly (and related) actually doing -- how is R code translated to web (js, json, html, css)
+- How events trigger code on the server (https://plotly-book.cpsievert.me/linking-views-with-shiny.html)
+- Comparisons of interactive plotting packages (plotly, bokeh, higcharter) in terms of how they interactive with javascript. Important differences for performance?
+- Comparing backends (html, server, server running R), pros and cons?
+
+- Building a custom htmlwidget?
+- Specific limitations I've encountered:
+  - Adding a main title with bscols
+  - Converting a dotplot to plotly 
+  - Weird double legend (doesn't appear in workspace) and controlling legend symbol (see slide: Example - Interactive pizza plot)
+  * The plotly_json function has solved some of my issues -- allows easy navigation of plot json
+

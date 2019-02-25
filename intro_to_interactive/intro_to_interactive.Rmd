@@ -1,11 +1,12 @@
 ---
-title: "Getting Started with Interactive Plotting in R"
+title: "Interactive, Dynamic Visualization in R and JavaScript "
 author: Jane Carlen, UC Davis Data Science Initiative
 date: March 1, 2019
 output: 
   ioslides_presentation:
     incremental: false
 ---
+
 <!-- To do: simplify code to minimal examples/remove dependencies e.g. emojifont-->
 
 ## Goals
@@ -29,13 +30,13 @@ In two weeks we'll discuss Shiny, where data can be *dynamic*
 > - ~~They look cool~~
 > - ~~They reduce decision-making~~
 > - Exploratory data analysis, your own or the user's
-    + Plots you publish have an argument, focus reader attention
+    Plots you publish have an argument, focus reader attention
 > - Browser-based, easy to share, few compatibility issues
 > - Expose the data
 > - Increase the amount of information you can share cleanly
 > - Brushing and linking
-    + Draw connections between data
-    + Uncover relationships
+    Draw connections between data
+    Uncover relationships
 > - You may not need shiny
 
 <!-- Best practices for interactivity. One slide? Sprinkled throughout? -->
@@ -50,6 +51,12 @@ The data is in the intro_to_interactive folder. Load it as below and view fields
 
 ```{r setup, echo = F, cache = T, warning = F, messsage = F, results = "hide"}
 
+# Packages to use code and txhousing examples
+# data processing
+library(dplyr)
+library(forcats)
+library(reshape2)
+# plotting
 library(ggplot2)
 library(plotly)
 library(crosstalk)
@@ -57,11 +64,10 @@ library(highcharter)
 library(rbokeh)
 library(DT)
 library(listviewer)
+library(widgetframe)
 
-library(dplyr)
+# Additional packages for pizza example
 library(sf)
-library(forcats)
-library(reshape2)
 library(emojifont)
 library(USAboundaries) #has state, county, congressional district and other shape files
 library(USAboundariesData)
@@ -445,19 +451,19 @@ subplot(p1, p2, titleX = TRUE, widths = c(0.3, 0.7)) %>% hide_legend() %>%
 - `fluidPage` from Shiny
 
 
-## Other widgets - adding a data table with DT {.smaller}
+## Other widgets - datatable example {.smaller}
 
-The `DT` package, an interface to the JavaScript library DataTables.
+- The `DT` package is an interface to the JavaScript library DataTables. The function `datatable()` creates an HTML widget as shown below.
 
-The main function in this package is datatable(). It creates an HTML widget to display R data objects with DataTables.
+- The `widgetframe` function `frameWidget` is used to embed the `datatable` output in this presentation. 
 
-```{r data_table, cache = T, eval = T, echo = T, message = F, warning = F, results = "asis"}
-DT::datatable(pizza.grouped, selection = "multiple")
+- Other crosstalk-compatible widgets include `d3scatter`, `leaflet` (maps), `summarywidget`, `rgl` (3D). (See https://rstudio.github.io/crosstalk/widgets.html)
+
+```{r data_table, cache = T, eval = T, echo = T, message = F, warning = F}
+widgetframe::frameWidget(
+  DT::datatable(txhousing, options = list(pageLength = 3))
+)
 ```
-
-Organizing our data by number of pizzas delivered helps us find patterns in where pizzas were delivered.
-Most of the top locations are big cities, but some aren't easily recognizable like Norwalk.
-
 
 ## Linking with plotly, pizza example
 
@@ -504,6 +510,7 @@ plotly.pizzas.delivered =
   highlight(on = "plotly_selected", off = "plotly_deselect", opacityDim = 1) 
 
 #   Table for right bar ----
+#   Organizing our data by number of pizzas delivered helps us find patterns in where pizzas were delivered.Most of the top locations are big cities, but some aren't easily recognizable like Norwalk.
 
 pizza.datatable = datatable(shared_pizza_delivered, group = "pizza_shared")
 
@@ -513,8 +520,11 @@ pizza_linked = bscols(widths = c(8,4,4), plotly.map.emoji, plotly.pizzas.deliver
 htmltools::save_html(pizza_linked, file = "pizza_linked.html")
 ```
 
+<iframe src="http://docs.google.com/viewer?url=http://lcolladotor.github.io/cv/en_CV_lcollado.pdf&embedded=true" width="900" height="780" style="border: none;"></iframe>
+
 ```{r linked_plot_html, echo = F}
-htmltools::includeHTML("file:///Users/janecarlen/Documents/DSI/intro_to_interactive/pizza_linked.html")
+#htmltools::includeHTML("file:///Users/janecarlen/Documents/DSI/intro_to_interactive/pizza_linked.html")
+#htmltools::("file:///Users/janecarlen/Documents/DSI/intro_to_interactive/pizza_linked.html")
 ```
 
 <!-- probably going to leave this out, won't have time-->

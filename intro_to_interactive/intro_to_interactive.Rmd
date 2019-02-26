@@ -65,6 +65,7 @@ library(rbokeh)
 library(DT)
 library(listviewer)
 library(widgetframe)
+library(htmltools)
 
 # Additional packages for pizza example
 library(sf)
@@ -108,7 +109,7 @@ Here is a static plot built in ggplot. What is it lacking?
 
 # Group by location
 pizza.grouped = pizza %>% group_by(lat, lon, Status) %>% 
-  summarize(Pizzas_delivered = sum(Number_of_pizzas, na.rm = T),
+  summarize(Pizzas_delivered = sum(Number_of_pizzas, na.rm = TRUE),
             Polling_place = first(Polling_place_address),
             City = first(City), # note there are some errors in city and state
             State = first(State))
@@ -257,7 +258,7 @@ Read this guide! https://plotly-book.cpsievert.me/index.html
 
 Enter this code in the console:
 
-```{r texas_housing_plotly, eval = F, echo = T}
+```{r texas_housing_plotly, eval = T, echo = T, warning = F, message = F, cache =  T, results = "hide"}
 
 names(txhousing)
 
@@ -328,22 +329,22 @@ Ask questions and consult https://plotly-book.cpsievert.me/a-case-study-of-housi
 
 ## The data-plot-pipeline {.smaller}
 
-```{r tx_housing_pipeline, eval = F, echo = T}
+```{r tx_housing_pipeline, cache = T, eval = T, echo = T, results = "hide", warning = F, message = F}
 
 tx.ggplotly2 = 
   tx.ggplotly %>%
   group_by(interaction(month, year)) %>%
-  summarize(overall_med = median(median, na.rm = T)) %>% 
+  summarize(overall_med = median(median, na.rm = TRUE)) %>% 
   add_lines(y = ~overall_med, color = I("black"), size = I(3), name = "overall_med")
 
 tx.ggplotly2
 
 plotly_json(tx.ggplotly2)
-plotly_data(tx.ggplotly2, id = 2)
-plotly_data(tx.ggplotly2, id = 3); names(plotly_data(tx.ggplotly2))
+plotly_data(tx.ggplotly2, id = 3)
+names(plotly_data(tx.ggplotly2, id = 2)) 
 ```
 
-Branch off with `add_fun`. Or save function and call with city name as argument.
+Branch off with `add_fun`. Or call external function with city name as argument.
 
 ```{r tx_housing_pipeline2, eval = F, echo = T}
 
@@ -359,18 +360,16 @@ tx.ggplotly %>%
 ```
 <!--Sometimes the directed acyclic graph property of a pipeline can be too restrictive for certain types of plots. In this example, after filtering the data down to Houston, there is no way to recover the original data inside the pipeline. The add_fun() function helps to work-around this restriction3 – it works by applying a function to the plotly object, but does not affect the data associated with the plotly object. https://plotly-book.cpsievert.me/a-case-study-of-housing-sales-in-texas.html -->
 
-## Additional features
+## Rangeslider {.smaller}
 
-Add a slider to control the time range of data in the plot 
+The `rangeslider` function lets us control the visible time range of data
 
-```{r pizza_rangeslider, eval = F, cache = T, echo = T}
+```{r pizza_rangeslider, eval = T, cache = T, echo = T, warning = F, message =F}
 
-tx.ggplotly2 %>% 
-  rangeslider(start = 1, end = length(tx.ggplotly2$x$data[[1]]$x))
-
+widgetframe::frameWidget(
+  tx.ggplotly2 %>% rangeslider(start = 1, end = length(tx.ggplotly2$x$data[[1]]$x))
+)
 ```
-
-[One or two more?]
 
 ## Example - Interactive pizza plot
 
@@ -467,25 +466,28 @@ widgetframe::frameWidget(
 
 ## Linking with plotly, pizza example
 
-```{r linked_plot, cache = T, eval = F, echo = F, warning = F, message = F}
+```{r linked_plot, cache = T, eval = T, echo = F, warning = F, message = F, results ="hide"}
 
-# Make necessary shared data sets ----
+# 1. Make necessary shared data sets ----
 
 # Restrict to deliveries made and add a y variable for later
 pizza.grouped.delivered = filter(pizza.grouped, Status == "Delivered") %>%
-                            mutate(ID = Polling_place) %>%
                             group_by(Pizzas_delivered) %>% mutate(y = 1:n()) %>% ungroup()
   
-shared_pizza_delivered = SharedData$new(pizza.grouped.delivered, key = ~ID, group = "pizza_shared")
+shared_pizza_delivered = SharedData$new(pizza.grouped.delivered, key = ~Polling_place, group = "pizza_shared")
+shared_pizza_delivered_small = SharedData$new(pizza.grouped.delivered %>% 
+                                              mutate(n = Pizzas_delivered) %>%
+                                              select("n", "City", "Polling_place"),
+                                              key = ~Polling_place, group = "pizza_shared")
 
-# Main plot with shared data ----
+# 2. Main plot with shared data ----
 plot.map.emoji = ggplot() + 
   # map
-  geom_sf(data = us.state, lwd = .5, fill = NA) +
-  geom_sf(data = us.congressional, lwd = .1) + 
+  geom_sf(data = us.state, lwd = .3, fill = NA) +
+  geom_sf(data = us.congressional, lwd = .1, fill = NA) + 
   # points
   geom_text(data = shared_pizza_delivered, 
-            #non-functioning aes label1 and label2 to pass these variables to plotly for the tooltip
+            #non-functioning aes label1 anpd label2 to pass these variables to plotly for the tooltip
             aes(x = lon, y = lat, size = Pizzas_delivered, label = pizza, label1 = City, label2 = Polling_place),
             alpha = 1) +
   ylim(24,75) + xlim(-175, -67) +
@@ -493,39 +495,32 @@ plot.map.emoji = ggplot() +
   theme(axis.title.x = element_blank(), axis.title.y = element_blank()) +
   ggtitle("Delivery locations")
 
-plotly.map.emoji = ggplotly(plot.map.emoji, tooltip = c("size", "City", "Polling_place")) %>%
-  highlight(on = "plotly_selected", off = "plotly_deselect") #can't seem to get click and selected
+plotly.map.emoji = ggplotly(plot.map.emoji, tooltip = c("size", "City", "Polling_place"), height = 500) %>%
+  highlight(on = "plotly_selected", off = "plotly_doubleclick", opacityDim = .1, color = "red") #not recognizing highlight red?
 
-# Dotplot for right bar ----
+# 3a. Dotplot for right bar ----
 #   I had issues with geom_dotplot converting to plotly so switched to geom_point
 
 dotplot.pizzas.delivered = ggplot(shared_pizza_delivered) +
   geom_point(aes(x = Pizzas_delivered, y = y, group = Polling_place), size = .5) +
   ylab("Count") + 
-  #optional theme changes
   theme_bw() 
 
 plotly.pizzas.delivered = 
-  ggplotly(dotplot.pizzas.delivered, tooltip = c("x","group")) %>% #use "key" or "group" but group gives a nicer label
-  highlight(on = "plotly_selected", off = "plotly_deselect", opacityDim = 1) 
+  ggplotly(dotplot.pizzas.delivered, tooltip = c("x","group"), height = 200) %>% #"key" or "group" for tooltip. group gives a nicer label
+  highlight(on = "plotly_selected", off = "plotly_doubleclick", opacityDim = .1, color = "red") 
 
-#   Table for right bar ----
-#   Organizing our data by number of pizzas delivered helps us find patterns in where pizzas were delivered.Most of the top locations are big cities, but some aren't easily recognizable like Norwalk.
+# 3b. Table for right bar ----
+pizza.datatable = datatable(shared_pizza_delivered_small, options = list(pageLength = 5),
+                            selection = "multiple", height = "200px", rownames = F)
 
-pizza.datatable = datatable(shared_pizza_delivered, group = "pizza_shared")
-
-# Panel plot ----
-pizza_linked = bscols(widths = c(8,4,4), plotly.map.emoji, plotly.pizzas.delivered, pizza.datatable)
-
+# 4. Panel plot ----
+# unlike subplot, bscols naturally joins widgets of different types
+pizza_linked = bscols(widths = c(8,4), plotly.map.emoji, list(plotly.pizzas.delivered, pizza.datatable))
 htmltools::save_html(pizza_linked, file = "pizza_linked.html")
 ```
 
-<iframe src="http://docs.google.com/viewer?url=http://lcolladotor.github.io/cv/en_CV_lcollado.pdf&embedded=true" width="900" height="780" style="border: none;"></iframe>
-
-```{r linked_plot_html, echo = F}
-#htmltools::includeHTML("file:///Users/janecarlen/Documents/DSI/intro_to_interactive/pizza_linked.html")
-#htmltools::("file:///Users/janecarlen/Documents/DSI/intro_to_interactive/pizza_linked.html")
-```
+<iframe src="pizza_linked.html"></iframe>
 
 <!-- probably going to leave this out, won't have time-->
 ```{r pizza_time, eval = F, echo = F}
@@ -590,47 +585,30 @@ bscols(widths = c(6,6), plotly.map.point, pizza_hourly_ggplotly)
 - Newer code, still under development. Unexpected limitations and bugs.
 - Related Packages - Bokeh (rbokeh), Highcharts (highcharter), rCharts, and more
 
-## Related Packages - Bokeh
+## Related Packages - Bokeh {.smaller}
 
-Plotting begins with `figure()`
-Add layers, `ly_*`
-- http://hafen.github.io/rbokeh/rd.html
-- unlike ggplot2, we do not attach a default data set when we call `figure()`, 
-    + data is explicitly specified for each layer.
-One strength, easy to customize interactivity
-- Many tools available for different types of interaction. 
-- Tools easily added through the `tools` argument to `figure()`, a vector of tool names, or `tool_` functions.
+- Main plotting function: `figure()`
+- Add layers with `ly_*` functions
+    + See http://hafen.github.io/rbokeh/rd.html#layer-functions
+- Easy to customize and use interactivity
+    + Use the `tools` argument of `figure()` or `tool_*` functions.
     + If the latter, some tools have additional parameters for finer control
     
-```{r bokeh, cache = T, eval = F, echo = T}
+Example scatter plot code:
+```{r bokeh, cache = T, eval = F, echo = T, message = F, warning = F}
 
-p <- figure() %>%
-  ly_points(Sepal.Length, Sepal.Width, data = iris,
-            color = Species, glyph = Species,
-            hover = list(Sepal.Length, Sepal.Width))
+txhousing.subset = txhousing %>%
+  filter(year > 2006 & year < 2009,
+         city %in% c("Dallas", "Houston", "San Antonio")) %>%
+  mutate(year = as.factor(year))
+  
+p <- figure(data = txhousing.subset, tools = "wheel_zoom") %>%
+  ly_points(x = listings, y = sales,
+            glyph = city, color = year,
+            hover = list(city, month, listings, sales)) %>%
+  tool_pan()
 
-z <- lm(dist ~ speed, data = cars)
-p <- figure(width = 600, height = 600) %>%
-  ly_points(cars, hover = cars) %>%
-  ly_lines(lowess(cars), legend = "lowess") %>%
-  ly_abline(z, type = 2, legend = "lm")
-p
-
-p <- figure()
 class(p) #"rbokeh"   "htmlwidget"
-
-#vs. 
-g <- ggplot()
-class(g)
-
-
-figure(tools = "pan") %>%
-  ly_points(Sepal.Length, Sepal.Width, data = iris, color = Species) %>%
-  tool_box_select() %>%
-  tool_lasso_select()
-
-figure() %>% ly_crect(data = mtcars, x = gear, y = cyl)
-
 ```
 
 ## Related Packages - Highcharter {.smaller}
@@ -643,19 +621,25 @@ Add layers, with `hc_add_series`: https://api.highcharts.com/highcharts/series
 
 Example scatter plot code:
 ```{r highcharter, cache = T, eval = F, echo = T}
-highchart() %>% hc_add_series(txhousing, "scatter", hcaes(x = listings, y = sales)) 
+h <- highchart() %>%
+  hc_add_series(txhousing.subset, "scatter",
+                hcaes(x = listings, y = sales, color = year, group = city)) 
 
-hchart(txhousing, "point", hcaes(x = listings, y = sales, group = city))
+h <- hchart(txhousing.subset, "point",
+            hcaes(x = listings, y = sales, color = year, group = city))
 
-class(Last.value) #"highchart"  "htmlwidget"
+class(h) #"highchart"  "htmlwidget"
 ```
+
+Behavior and customizability of plotting shape and color are limited
 <!-- undesirable things:  color doesn't work to add color, adding group in the highchart vs. hchart syntax produces different effects --->
 
-## Review - Comparison of package heatmaps {.smaller}
+## Comparison of heatmaps {.smaller}
+
+Create a correlation matrix of median housing prices of Texas cities and show default heatmaps for each package.
 
 ```{r heatmap comparison, echo = T, eval = F}
 
-# Create a (time-flattened) correlation matrix of median city housing prices to show in heatmaps
 txhousing.heatmap.data = txhousing %>%
   mutate(time = as.character(interaction(year, month))) %>%
   select("city", "time", "median") %>%
@@ -665,18 +649,18 @@ txhousing.heatmap.data = txhousing %>%
 
 # base
 image(as.matrix(txhousing.heatmap.data))
-
 # ggplot
-ggplot(melt(txhousing.heatmap.data)) + geom_tile(aes(x = Var1, y = Var2, fill = value))
-
+ggplot(melt(txhousing.heatmap.data)) + 
+          geom_tile(aes(x = Var1, y = Var2, fill = value))
 # plotly
-ggplotly(ggplot(melt(txhousing.heatmap.data)) + geom_tile(aes(x = Var1, y = Var2, fill = value)))
-
-# highcharter
-hchart(melt(txhousing.heatmap.data), "heatmap", hcaes(x = Var1, y = Var2, value = value))
-
+ggplotly(ggplot(melt(txhousing.heatmap.data)) + 
+          geom_tile(aes(x = Var1, y = Var2, fill = value)))
 # rbokeh
-figure(width = 600) %>% ly_crect(data = melt(txhousing.heatmap.data), x = Var1, y = Var2, color = value)
+figure(width = 600) %>% ly_crect(data = melt(txhousing.heatmap.data), 
+          x = Var1, y = Var2, color = value)
+# highcharter
+hchart(melt(txhousing.heatmap.data), "heatmap", 
+          hcaes(x = Var1, y = Var2, value = value))
 
 ```
 

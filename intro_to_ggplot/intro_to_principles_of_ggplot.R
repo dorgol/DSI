@@ -1,4 +1,5 @@
-# Basics of plotting and ggplot, based on Nick Ulle's notes from Stat 141A
+# Introduction to principles of plotting and ggplot
+# Based off Nick Ulle's notes from Stat 141A
 # Below should take between 60 and 90 minutese
 # Jane Carlen
 # March 7, 2019

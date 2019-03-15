@@ -1,16 +1,11 @@
-#
-# This is a Shiny web application. You can run the application by clicking
-# the 'Run App' button above.
-#
-# Find out more about building applications with Shiny here:
-#
-#    http://shiny.rstudio.com/
+# Jane Carlen's Shiny app for Burn EDA
 #
 # NOTES:
 #  - Plotting color of infection days (circles) indicates type, as indicated by color of "Show infection type" labels at sidebar
-#  - Plotting color of testing days (diamons) indicate type of blood tests performed
+#  - Plotting color of testing days (diamonds) indicate type of blood tests performed
+#  - Plotting color of criteria met (squares), optionally turned on in "Show infection type" sidebar, indicate if a criteria (Greenhalgh or SIRS) was met based on my limited-data approximation
 #  - Some plots have background colors to indicate normal (gray) ranges or abnormal (red) ranges.
-#     TI find them helpful and would like to add more. hey come from Greenhalgh et al p. 779. (American Burn Association Consensus Conference)
+#     I find them helpful and would like to add more. They come from Greenhalgh et al p. 779. (American Burn Association Consensus Conference)
 # 
 # TO DO:
 # Figure out why Crosstalk doesn't work across facets (columns)
@@ -19,18 +14,21 @@
 # 
 # - Older people are more likely to experience blood infection when their heart rate is in the normal range. Younger people seem more likely to be above it.
 # - Cumulative days outside normal ranges are important
+# - Respiratory rate cutoff (>25 bpm) seems too low in the Greenhalgh criteria. 30 may be more appropriate.
 #  
 ########################################################################################################################
 
 library(shiny)
 library(dplyr)
-library(forcats)
+#library(forcats)
 library(ggplot2)
-library(reshape)
-library(crosstalk)
-library(plotly)
-library(scales)
-library(stringr)
+#library(reshape)
+#library(crosstalk)
+#library(plotly)
+#library(scales)
+#library(stringr)
+
+setwd("~/Documents/DSI/Burn/")
 
 # DATA ####
 TT <- read.csv("TT_jane.csv", stringsAsFactors = F, check.names = F)[,-1]
@@ -40,7 +38,7 @@ TT = TT %>% mutate(Blood_test_performed = as.factor(case_when(
   !is.na(V_TIME_PERFORMED_1) & !is.na( V_TIME_PERFORMED_2) ~ "Blood CBC and Chemistry",
   is.na(V_TIME_PERFORMED_1) & !is.na( V_TIME_PERFORMED_2) ~ "Blood CBC",
   !is.na(V_TIME_PERFORMED_1) &  is.na(V_TIME_PERFORMED_2) ~ "Blood Chemistry"))) #both NA auto goes to NA
-vital_vars = str_extract(names(TT_blood_infection), "V_.*")[str_detect(names(TT_blood_infection), "V_.*")]
+#vital_vars = str_extract(names(TT_blood_infection), "V_.*")[str_detect(names(TT_blood_infection), "V_.*")]
 vital_vars = c("V_DATE_COLLECTION", "V_TIME_PERFORMED_1", "V_TIME_PERFORMED_2", "V_TIME_PERFORMED_3",
                           "V_HEART_RATE", "V_PB_SYSTOLIC", "V_BP_DIASTOLIC", "V_MEANARTERIAL_PRESSURE", "V_CENTRAL_VENOUS_PRESSURE",
                           "V_TEMPERATURE", "V_PAO2", "V_FIO2", "V_PACO2", "V_HCO3",
@@ -159,7 +157,7 @@ ui <- fluidPage(
         
         numericInput("maxplots", "Max plots to show:", value = 16),
         
-        selectInput("individual", "PER_CODE:",
+        selectInput("individual", "Individual ID (PER_CODE):",
                     choices = sort(unique(TT$PER_CODE)), selected = sample(TT$PER_CODE,1)
         ),
         

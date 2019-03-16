@@ -1,50 +1,52 @@
 # Jane Carlen's Shiny app for Burn EDA
-#
+
 # NOTES:
 #  - Plotting color of infection days (circles) indicates type, as indicated by color of "Show infection type" labels at sidebar
 #  - Plotting color of testing days (diamonds) indicate type of blood tests performed
 #  - Plotting color of criteria met (squares), optionally turned on in "Show infection type" sidebar, indicate if a criteria (Greenhalgh or SIRS) was met based on my limited-data approximation
 #  - Some plots have background colors to indicate normal (gray) ranges or abnormal (red) ranges.
 #     I find them helpful and would like to add more. They come from Greenhalgh et al p. 779. (American Burn Association Consensus Conference)
-# 
+#  - The TT_jane.csv and TT_Demo1.csv documents that are loaded are pre-processed versions of Transfusion Trigger data.
+#       + They are processed in the first two code chucks (Setup, TT_Data) of burn_data_EDA.Rmd
+
 # TO DO:
 # Figure out why Crosstalk doesn't work across facets (columns)
 # 
+
 # Hypotheses generated from Shiny app:
 # 
 # - Older people are more likely to experience blood infection when their heart rate is in the normal range. Younger people seem more likely to be above it.
-# - Cumulative days outside normal ranges are important
+# - Cumulative days outside normal ranges are important.
 # - Respiratory rate cutoff (>25 bpm) seems too low in the Greenhalgh criteria. 30 may be more appropriate.
-#  
+
 ########################################################################################################################
 
 library(shiny)
 library(dplyr)
-#library(forcats)
 library(ggplot2)
-#library(reshape)
-#library(crosstalk)
+library(forcats)
+library(reshape)
+library(scales)
 #library(plotly)
-#library(scales)
-#library(stringr)
 
 setwd("~/Documents/DSI/Burn/")
 
 # DATA ####
+# TT_jane.csv and TT_Demo1.csv
 TT <- read.csv("TT_jane.csv", stringsAsFactors = F, check.names = F)[,-1]
 TT$per_code_factor = as.factor(TT$PER_CODE)
 TT$per_code_factor = reorder(TT$per_code_factor, TT$total_days_since_first_collection) #for plot order later
 TT = TT %>% mutate(Blood_test_performed = as.factor(case_when(
   !is.na(V_TIME_PERFORMED_1) & !is.na( V_TIME_PERFORMED_2) ~ "Blood CBC and Chemistry",
   is.na(V_TIME_PERFORMED_1) & !is.na( V_TIME_PERFORMED_2) ~ "Blood CBC",
-  !is.na(V_TIME_PERFORMED_1) &  is.na(V_TIME_PERFORMED_2) ~ "Blood Chemistry"))) #both NA auto goes to NA
-#vital_vars = str_extract(names(TT_blood_infection), "V_.*")[str_detect(names(TT_blood_infection), "V_.*")]
+  !is.na(V_TIME_PERFORMED_1) &  is.na(V_TIME_PERFORMED_2) ~ "Blood Chemistry"))) #if both NA goes to NA
+#vital_vars = names(TT)[grepl(x = names(TT), "V_.*")]
 vital_vars = c("V_DATE_COLLECTION", "V_TIME_PERFORMED_1", "V_TIME_PERFORMED_2", "V_TIME_PERFORMED_3",
                           "V_HEART_RATE", "V_PB_SYSTOLIC", "V_BP_DIASTOLIC", "V_MEANARTERIAL_PRESSURE", "V_CENTRAL_VENOUS_PRESSURE",
                           "V_TEMPERATURE", "V_PAO2", "V_FIO2", "V_PACO2", "V_HCO3",
                           "V_RESPIRATORY_RATE", "V_SODIUM", "V_POTASSIUM", "V_BLOOD_UREA_NITROGEN", "V_CREATININE",
                           "V_PLATELET_COUNT", "V_WHITE_BC", "V_HEMOGLOBIN", "V_HEMATOCRIT",  "V_GLASCOWCOMA_SCALE", 
-                          "V_GLUCOSE", "V_MODS_SCORE", "V_PH","V_BILIRUBIN") #for individual plot ordering later
+                          "V_GLUCOSE", "V_MODS_SCORE", "V_PH","V_BILIRUBIN") #for individual plot ordering later - this is all the variavbles in the TT data set beginning with V_ except for "V_ER_DEF_DATE_01", "V_TIME_PERFORMED"
                           
 TT_Demo1 = read.csv("TT_Demo1.csv")[,-1]
 
@@ -382,7 +384,6 @@ server <- function(input, output) {
         # Add faceting
        ind.plot = ind.plot +
          facet_wrap(~variable, scales = "free_y")
-         #facet_trelliscope(~ variable, ncol = 4, nrow = 6, as_plotly = TRUE, plotly_args = list(highlight = list(on = "plotly_selected"), hidelegend = TRUE))
         
        # Add plotly
        # ind.plot = ggplotly(ind.plot, tooltip = c("x", "y")) %>%

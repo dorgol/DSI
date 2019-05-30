@@ -15,8 +15,7 @@ Cleaning tasks done:
     - Checked that the papers from years like 1914 should truly be removed.
     
 2.  (Lorraine) cleaned author names, joining authors who are listed under different names
--   When you're done with your part, save a version of the to-be-cleaned csv with your initials in the title. 
 
-**--> This is the file KelloggAuthorList_needs_author_cleaning_LJH.csv**
+**--> The output of this is the file KelloggAuthorList_needs_author_cleaning_LJH.csv**
 
 

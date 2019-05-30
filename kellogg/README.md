@@ -1,23 +1,21 @@
-Code and draft visualization output for presenting Louise Kellogg's published work 
-Jane Carlen
+Code and data for visualizing Louise Kellogg's published work \
+Jane Carlen \
 May 2019
 
-------------------------------------------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------------
 
-The document "KellogAuthorList_needs_cleaning.csv" [NOW REMOVED SINCE THIS TASK IS DONE] contains her list of papers as pulled from google scholar. 
+The document **KelloggAuthorList_needs_author_cleaning_LJH.csv** (sorry for the misleading name) contains the data needed to make the plots. 
 
-Done :
+The R script **Kellogg_author_network.R** has the code to create an interactive and a dynamic plot. This script contains code that was used to clean the data in its sections #1 and #2, but this code does not need to be run again (section #0 should still be run to load packages, etc.). The clean data is in the KelloggAuthorList_needs_author_cleaning_LJH.csv, and that is loaded in section #3. Section #4 creats the plots
 
-1. About twenty papers are missing a year and a few more have a year in the  early 1900's, well before her years of active work. 
-    - Fill in the year for the papers missing years, unless it's a  duplicate of a paper someowhere else in the list, in which case write "duplicate" (or some other keyword so I can filter later) in the year column.
-    - Check that the papers from years like 1914 should truly be remove and if so write "remove" in the year column. 
-    This will probably involve a lot of googling of paper titles : /
-    - **When you're done with your part, save a version with your initials in the title.** 
+Cleaning tasks done:
+
+1. About twenty papers were missing a year and a few more had a year in the early 1900's, well before her years of active work. 
+    - Filled in the year for the papers missing years, unless a  duplicate of a paper someowhere else in the list, in which case filtered out.
+    - Checked that the papers from years like 1914 should truly be removed.
     
-2.  (For Lorraine) clean authors names, joining authors who are listed under different names
--   Use the file "KellogAuthorList_needs_author_cleaning.csv"
--   When you're done with your part, save a version with your initials in the title. 
-
+2.  (Lorraine) cleaned author names, joining authors who are listed under different names
+-   When you're done with your part, save a version of the to-be-cleaned csv with your initials in the title. 
 
 **--> This is the file KelloggAuthorList_needs_author_cleaning_LJH.csv**
 

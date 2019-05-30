@@ -17,6 +17,8 @@ Done :
 2.  (For Lorraine) clean authors names, joining authors who are listed under different names
 -   Use the file "KellogAuthorList_needs_author_cleaning.csv"
 -   When you're done with your part, save a version with your initials in the title. 
+
+
 **--> This is the file KelloggAuthorList_needs_author_cleaning_LJH.csv**
 
 

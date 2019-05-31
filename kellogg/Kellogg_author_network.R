@@ -133,6 +133,7 @@ kellogg = read.csv("KelloggAuthorList_needs_author_cleaning_LJH.csv", stringsAsF
 
 #filtered versions (after filtering outpapers with bad years)
 kellogg.coauthors.filtered = sapply(as.character(kellogg$author), strsplit, ", ")
+kellogg.coauthors.filtered = lapply(kellogg.coauthors.filtered, trimws)
 kellogg.coauthors.unique.filtered = 
   unique(unlist(kellogg.coauthors.filtered))[order(unique(unlist(kellogg.coauthors.filtered)))] #alphabetize
 

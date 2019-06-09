@@ -1,0 +1,1238 @@
+---
+title: "Burn Data EDA"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+# Overview
+
+Two studies were conducted:
+
+1) TT - Transfusion Trigger (= TRIBE)
+
+- Liberal vs. restrictive transfusion strategry (more or less blood).
+- Results already analyzed and showed no signficant effect of treatment.
+
+2) PCR SEPSIS
+
+- Ucing PCR to try to identify people who had bloodstream infections, but faster than traditional methods
+
+Question addressed here:
+
+- These studies included daily measurements of patients vitals such as temperature, heart-rate, blood pressure, and sodium levels.
+
+**Can we use this body of patient information to predict infection?**
+
+<!--FROM README: https://docs.google.com/document/d/1kXPAa4m70_AxaFMaNnrN0M9mdwDRW-4Qc0LzyxkZeg4/edit
+In general what we are interested in doing, if possible, is developing a predictive model for development of sepsis based on lab values and vitals. The idea being to identify patients with a high likelihood of developing sepsis during the course of their hospitalization in order to trigger earlier initiation of treatment.-->
+ 
+This work is exploratory "proof of concept" to see if there is something here worth more investigation. 
+
+# Notes
+
+- Infection variables (e.g., blood, urine) refer to type of infection, with primary interest in bloodstream infections. For the TT study I started EDA focusing on the "any" infection variable, i.e. starting at the most general level, and looked specifically at "blood" infection in some cases, the infection type of primary interest.
+
+- I looked at the day before onset, and in most cases restricted futher to a patient's first onset.
+
+- Sepsis is identified differently for burn patients than others. Individual variables such as temperature which are normally used as indicators, are generally elevated or otherwise abnormal due to the burn.    
+
+<!--- Both the TT and PCR studied have information on patient vitals and infection outcomes, but is their information different?-->
+
+- Important notes from the study authors, Dr. Palmieri and Dr. Tran via Sandy Taylor:
+
+    + Temperature was used as a criteria for culture in both studies. This means that the strength of temperature as an indicator or pre-indicator of infection is biased, since it was used to select who was screened. This may be true of other measurements. From Dr. Tran's email: *Cultures for PCR Sepsis were collected only when indicated at each site. Typically, that would be based on the presence of signs of sepsis such as fever (Temp >39.5C). For PCR Sepsis, we kept it a bit more simple especially for blood cultures. If the patient had a truly pathogenic organism from blood culture, then they were bacteremic, and considered septic if they met other criteria (I believe we used the same "Infection" form as Transfusion Trigger) such as fever, WBC, platelets, etc.*
+
+    + From Dr. Palmieri's email: *In terms of labs to focus on, would use platelets, wbc, sodium, chloride.*
+<!--In terms of sepsis group, I have been on it, and the only parameter we likely don’t have on the list is lactate. That variable is not frequently measured by our group, but worth looking into. Normal temperature for burn patient is 38-39.4 celcius. Heart rate will vary widely from 60 (patients on beta blocker) to 130. Blood pressure same as for normals.*-->
+
+    + From Dr. Tran's email: *Routinely collected labs that may have value in predicting sepsis (more so burn sepsis) would be the usual CBC. Platelet count useful for sepsis severity and somewhat of a late marker for burn sepsis. We're messing with some AI and machine learning work right now with the PCR Sepsis database and platelets remain a strong parameter to look at. Not sure if TRIBE has CBC indices (RDW, MCHC, MCV, etc) which may be of use. Electrolytes including sodium variability may be helpful from the chemistry panel. Respiratory rate, heart rate, etc are also useful. Pretty much the parameters from Dr. Greenhalgh's consensus guidelines (JBCR 2007?).*
+
+<!---from study protocol-->
+
+<!--
+Randomization will be based on “intent to treat.” Consecutively admitted and consented burn patients meeting the above criteria will be assigned to one of two treatment groups (restrictive versus liberal transfusion strategy). Computer generated randomization will be available to all sites by telephone 24 hours per day, 7 days per week.  
+
+-- ideas: include transfustion strategy a predictor. it could also be conflated with hemoglobin levels. 
+Temperature should be a transfomred predictor or double indicator of >39 AND <36.5. 
+make sure i understand mapping of signs of sepsis to variables in the study, e.g tachycardia?
+
+-->
+------------------------------------------------------------------------------------------------------------------------------------
+
+# TT Study EDA
+
+```{r Setup, cache = T, echo = F, warning = F, message = F, results = "hide"}
+knitr::opts_chunk$set(warning = F, echo = F, results = "hide") 
+knitr::opts_chunk$set(root.dir = "~/Documents/DSI/Burn/Data")
+
+#knitr::opts_template$set(mymodels = list(echo = F, warning = F, results = "hide", fig.keep = "none"))
+#knitr::opts_template$set(myplots = list(echo = F, warning = F, results = "hide"))
+
+library(readxl) 
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+library(cowplot)
+library(ggrepel)
+library(lubridate)
+library(stringr)
+library(grDevices)
+library(tidyr)
+# interactive
+library(crosstalk)
+library(plotly)
+library(d3scatter)
+# decision trees
+library(rpart)
+library(rpart.plot)
+
+dir1 = "~/Documents/DSI/Burn/Data"
+files = list.files(path = dir1, pattern = "xlsx")
+
+sheets = sapply(paste(dir1,files,sep="/"), excel_sheets)
+
+bad = "Copy of PCR DATA SET 03-19-2018_SEPSIS.xlsx"
+files = c(files[!files==bad], bad) #fixing for bug below
+
+spreadsheets = lapply(files[which(files!=bad)], function(x) {
+  sheets = sapply(paste(dir1,x,sep="/"), excel_sheets)
+  lapply(sheets, read_xlsx, path = paste(dir1,x,sep="/"))
+})
+
+#added this fix to deal with data read error in read_xlsx
+pcr_sheets = sapply(paste(dir1, bad, sep = "/"), excel_sheets)
+spreadsheets = c(spreadsheets, list(lapply(pcr_sheets, read_xlsx, path = paste(dir1,files[which(files==bad)],sep="/"), col_types = "text")))
+
+names(spreadsheets) = files
+```
+
+```{r TT_data, eval = T, cache = T, echo = F, warning = F, message = F, results = "hide"}
+
+# Load Data --------------------------------------------------------------------------------------------------------
+
+#"This is daily blood chemistry and vitals for each patient":
+TT_ABA = spreadsheets[["ABA_TT_Daily_Collection_Part_1.xlsx"]]
+
+# This is demographic information 
+TT_Demo = spreadsheets[["TT Subject List 8-5-16.xlsx"]]
+write.csv(TT_Demo[[1]], "TT_Demo1.csv")
+
+# This is infection information
+TT_Infection = spreadsheets[["Infection.xlsx"]][[1]]
+
+#View Variable info
+
+# View(TT_ABA[[2]])
+# View(TT_Demo[[2]])
+# View(spreadsheets[["Infection.xlsx"]][[2]])
+
+# Notes on variables:
+    # PER_CODE == PATPROT_PATSTDID # both patient ID
+    # STUDY_NUMBER same for all entries
+
+# Merge Data --------------------------------------------------------------------------------------------------------
+
+# Here I add a bunch of variables to help track, describe and predict infections ----
+# My new variables all begin lower-case to distinguish from study variables ----
+
+TT = left_join(TT_ABA[[1]], TT_Demo[[1]], by = c("PER_CODE" = "Patient ID"))
+TT = left_join(TT, TT_Infection)
+
+TT = TT %>% arrange(PER_CODE, V_DATE_COLLECTION) %>%
+  mutate( # overall variables
+    per_code_factor = as.factor(PER_CODE),
+    study_id = as.numeric(per_code_factor),
+    study_label = ifelse(duplicated(study_id), NA, study_id),
+    `study outcome abbr.` = as.factor(`Study Outcome`),
+    index = 1:nrow(TT)
+  ) %>%
+  group_by(PER_CODE) %>% arrange(V_DATE_COLLECTION) %>% 
+  mutate( # individual variables
+      onset_tomorrow = ifelse(as.Date(lead(V_DATE_COLLECTION, 1))==as.Date(V_DATE_COLLECTION)+1 & lead(Onset, 1)=="Yes", .5, 0),
+      onset_tomorrow = recode(as.character(onset_tomorrow + (Any == "Yes")), 
+                                 "1.5" = "Current infection",
+                                 "1" = "Current infection",
+                                 "0.5" = "Day before infection",
+                                 "0" = "Neither",
+                                 "NA" = "NA"), #-- note that an individual can have multiple onsets
+      days_since_first_collection = (as.Date(V_DATE_COLLECTION) - min(as.Date(V_DATE_COLLECTION))),
+      total_days_since_first_collection = as.numeric(max(days_since_first_collection)),
+      n_onset = sum(as.numeric(Onset=="Yes"), na.rm = T), #number of onsets
+      n_any = sum(as.numeric(Any=="Yes"), na.rm = T), # number of infections
+      n_blood = sum(Blood == TRUE, na.rm = T),
+      n_urine = sum(Urine == TRUE, na.rm = T),
+      n_pneumonia = sum(Pneumonia == TRUE, na.rm = T),
+      n_wound = sum(Wound == TRUE, na.rm = T),
+      first_any = which(Any=="Yes")[1]-1,
+      period1_before = ifelse(days_since_first_collection <= first_any & days_since_first_collection >= max(0, first_any-1), # different from onset_tomorrow because restricted to first infection
+                              ifelse(days_since_first_collection == first_any, "First infection", "1-day period before first"), "Neither"),
+      period2_before = ifelse(days_since_first_collection <= first_any & days_since_first_collection >= max(0, first_any-2), 
+                              ifelse(days_since_first_collection == first_any, "First infection", "2-day period before first"), "Neither"),
+      period3_before = ifelse(days_since_first_collection <= first_any & days_since_first_collection >= max(0, first_any-3), 
+                              ifelse(days_since_first_collection == first_any, "First infection", "3-day period before first"), "Neither"),
+      first_any_date = V_DATE_COLLECTION[min(first_any+1)],
+      first_onset = which(Onset=="Yes")[1]-1,
+      first_onset_date = V_DATE_COLLECTION[min(first_onset+1)],
+      first_blood = which(Blood)[1]-1,
+      first_blood_date = V_DATE_COLLECTION[min(first_blood+1)],
+      first_blood_l = as.logical(replace_na(V_DATE_COLLECTION == first_blood_date, 0)),
+      blood_onset_tomorrow = replace_na((days_since_first_collection == (first_blood - 1)), 0),
+      before_any = days_since_first_collection < first_any,
+      before_blood = days_since_first_collection < first_blood,
+      PDR = as.numeric(PDR)) %>% 
+  ungroup()
+
+# More variable manipulation
+levels(TT$`study outcome abbr.`)[grepl("Death",levels(TT$`study outcome abbr.`))] = "Death" #for plot labels
+levels(TT$`study outcome abbr.`)[grepl("completed protocol", levels(TT$`study outcome abbr.`))] = "Completed protocol"
+TT$per_code_factor = reorder(TT$per_code_factor, TT$total_days_since_first_collection) #for plot order later
+
+write.csv(TT, "TT_jane.csv")
+
+# Individual Data --------------------------------------------------------------------------------------------------------
+
+# Information about individuals' infections
+TT_per = TT %>% group_by(PER_CODE) %>%
+  summarize(n_any = sum(Any=="Yes", na.rm = T),
+            n_onset = sum(Onset=="Yes", na.rm = T),
+            n_collect = n(),
+            n_blood = first(n_blood),
+            n_urine = first(n_urine),
+            n_pneumonia = first(n_pneumonia),
+            n_wound = first(n_wound),
+            first_collection_date = min(V_DATE_COLLECTION),
+            first_any_date = first(first_any_date),
+            first_any = first(first_any),
+            first_onset_date = first(first_onset_date),
+            first_onset = first(first_onset),
+            first_blood_date = first(first_blood_date),
+            first_blood = first(first_blood),
+            any_per_collection = round(ifelse(n_collect ==0, 0, n_any/n_collect), 1),
+            onset_per_collection = round(ifelse(n_collect ==0, 0, n_onset/n_collect), 1),
+            first_reading_w_infection = ifelse( sum(Any == "Yes" | Onset == "Yes", na.rm = T) > 0, which.min(Any == "Yes"| Onset == "Yes"), 0),
+            outcome = `Study Outcome`[1],
+            `Partial Thickness` = first(`Partial Thickness`),
+            `Full Thickness` = first(`Full Thickness`),
+             TBSA = first(TBSA),
+            `study outcome abbr.` = first(`study outcome abbr.`),
+             PDR = first(PDR),
+             `Admit_date` = first(`Admit Date`)) %>% 
+  mutate(n_outcome = as.vector(table(`study outcome abbr.`)[`study outcome abbr.`]))
+
+# blood infection
+TT_blood_infection = filter(TT, n_blood > 0) %>% group_by(PER_CODE)
+```
+
+# Question 0: Describe who was screened for blood infection and when ####
+
+There are three variables indicating time of blood-level screening in the data, in addition to the vital screening variable (V_TIME_PERFORMED). They refer to blood CBC (V_TIME_PERFORMED_1), blood chemistry (V_TIME_PERFORMED_2), and blood gas (V_TIME_PERFORMED_3) respectively, according to the variable descriptions.
+
+Almost all entries have vitals (V_TIME_PERFORMED, 33 NA), and most have blood CBC (V_TIME_PERFORMED_1, 2186 NA) and blood chemistry (V_TIME_PERFORMED_2, 3542 NA). Only about one third have V_TIME_PERFORMED_3 (9111 NA) out of 14852 entries.
+
+Only two entries have Blood infection reported when neither Blood CBC and Chemisty were performed, but in general (the other 120), this seems to be a precursor for detection. 
+
+
+```{r TT_screened, cache = T, echo = F, warning = F, message = F, results = "hide", fig.height = 4}
+
+vital_vars = str_extract(names(TT_blood_infection), "V_.*")[str_detect(names(TT_blood_infection), "V_.*")]
+
+# Vitals were basically always gathered when blood infection was detected ----
+table(!is.na(TT$V_TIME_PERFORMED), TT$Blood)
+
+# Which blood tests were performed when blood infection was detected? ----
+table(!is.na(TT$V_TIME_PERFORMED_1), TT$Blood)
+table(!is.na(TT$V_TIME_PERFORMED_2), TT$Blood)
+table(!is.na(TT$V_TIME_PERFORMED_3), TT$Blood)
+
+# Only two entries have Blood infection reported when neither Blood CBC and Chemisty were performed ----
+table(!is.na(TT$V_TIME_PERFORMED_1) | !is.na(TT$V_TIME_PERFORMED_2), TT$Blood)
+
+# entries with Blood infection reported but blood vitals not taken
+filter(TT, is.na(TT$V_TIME_PERFORMED_1) & is.na(TT$V_TIME_PERFORMED_2), TT$Blood) %>%  
+  select("V_DATE_COLLECTION", "PER_CODE", "V_HEART_RATE","V_TEMPERATURE","V_RESPIRATORY_RATE","Vent Days") 
+
+# Not sure why they were diagnosed on those days without the tests being done. Or maybe they were done but time not entered?
+filter(TT, PER_CODE == "TT-001-00360") %>%
+  select("V_DATE_COLLECTION", "PER_CODE", "V_HEART_RATE","V_TEMPERATURE","V_RESPIRATORY_RATE","Vent Days", "Blood")
+
+filter(TT, PER_CODE == "TT-018-00344") %>%
+  select("V_DATE_COLLECTION", "PER_CODE", "V_HEART_RATE","V_TEMPERATURE","V_RESPIRATORY_RATE","Vent Days", "Blood")
+
+# Distribution of variables for tested vs non_tested groups
+tested_vs_non_tested_CBC = ggplot(melt(TT %>% select(vital_vars[-c(1,3,4)]), id.vars = "V_TIME_PERFORMED_1"), aes(x = value, color = !is.na(V_TIME_PERFORMED_1))) + geom_density() + 
+  scale_color_discrete(name = "Blood CBC Performed") +
+  theme_bw() +
+  theme(legend.position = "top", strip.text = element_text(size = 6)) +
+  facet_wrap(~variable, scales = "free")
+ 
+tested_vs_non_tested_Chemistry = ggplot(melt(TT %>% select(vital_vars[-c(1,2,4)]), id.vars = "V_TIME_PERFORMED_2"), aes(x = value, color = !is.na(V_TIME_PERFORMED_2))) + geom_density() + 
+  scale_color_discrete(name = "Blood Chemistry Performed") +
+  theme_bw() +
+  theme(legend.position = "top", strip.text = element_text(size = 6)) +
+  facet_wrap(~variable, scales = "free")
+
+plot_grid(tested_vs_non_tested_CBC, tested_vs_non_tested_Chemistry)
+
+```
+
+
+# Question 1: Describe the type, frequency and patterns of infections in study participants ####
+
+Observations:
+
+- The majority of individuals in the study had no infection and about a quarter had more than one.
+- We'll need to distinguish the first onset of infection from subsequent onsets. Dr. Taylor suggested (12/6 meeting) that data about subsequent infectons may be less reliable than data about the first one.
+- The number of data collections for each individual ranges quite a bit, but most had between 0 and 100 collections.
+- Only about 20 percent of infections were specifically blood, urine, pneumonia or wound infection. This means that there is limited data to model the first onset of blood infection, which is the outcome we are most intersted in. 
+- There is generally low corellation between different infection types.
+
+```{r TT_infection_stat_distributions, cache = T, echo = F, warning = F, message = F, results = "hide", fig.height = 4}
+
+ggplot(melt(TT_per[,c("PER_CODE", "n_any", "n_onset",  "n_collect", "first_any", "n_blood", "n_urine", "n_pneumonia", "n_wound")]),
+       aes(x = value)) + geom_bar(aes(y = ..prop..)) + facet_wrap(~variable, scale = "free", nrow = 2) +
+       theme_bw() +
+       ggtitle("Overview of distribution of infections in the data")
+
+```
+
+```{r TT_infection_type_distributions, cache = T, echo = F, warning = F, message = F, results = "hide", fig.height = 3, fig.width = 10}
+
+infection_types = data.frame(
+  value = colSums(TT_per[,c("n_any","n_blood","n_urine", "n_pneumonia", "n_wound")], na.rm = T),
+  type = c("any","blood","urine","pneumonia", "wound"))
+plot_by_infections = ggplot(infection_types) + geom_col(aes(x = type, y = value, fill = type)) + 
+  theme_bw() + ggtitle("Total number of infections observed by type")
+
+infection_types_per_person = data.frame(
+  value = colSums(TT_per[,c("n_any","n_blood","n_urine", "n_pneumonia", "n_wound")]>0, na.rm = T),
+  type = c("any","blood","urine","pneumonia", "wound"))
+plot_by_person =ggplot(infection_types_per_person) + geom_col(aes(x = type, y = value, fill = type)) + ylim(0,340) +
+  theme_bw() + ggtitle("Total number of people infected by type")
+
+plot_grid(plot_by_infections, plot_by_person)
+```
+
+```{r TT_infection_type_correlation, warning = F, message = F, echo = T, cache = T}
+
+#Correlation of having such an infection
+round(cor(TT_per[,c("n_blood","n_urine","n_wound", "n_pneumonia", "n_any")] > 0, use = "pairwise.complete.obs"), 2)
+
+#Correlation of number of such infections
+round(cor(TT_per[,c("n_blood","n_urine","n_wound", "n_pneumonia", "n_any")], use = "pairwise.complete.obs"), 2)
+
+```
+
+<!-- In the following plot, numbers shown map to a patient ID and the points are grouped for each patient. Each patient is represented by a small segment of points, representing their readings over time (on the y-axis). The plot enables us to visualize all individuals at once, highlighting the length and recurrence of their infections. Some segments are entirely red indicating no infection, and some have many green points, indicating recurrent infections.-->
+```{r TT_infections_over_time, cache = T, eval = F, echo = F, warning = F, message = F, results = "hide", fig.height = 8, fig.width = 12, fig.pos = "h!", out.extra = ''}
+
+#this plot didn't turn out well, so don't evaluate
+ggplot( TT %>% filter(study_id %in% sample(max(TT$study_id), 100)), aes(x = index, y = V_DATE_COLLECTION, shape = Any, color = Onset, label = study_label)) +
+  geom_point(aes(size = n_any)) +
+  scale_size(range = c(1,2), guide = FALSE) +
+  scale_shape_manual(values = c("Yes"=16, "No"= 4)) + theme_bw() + 
+  theme(legend.position = "bottom") +
+  geom_text_repel(color = "black", hjust=0, vjust=1, size = 2.5, segment.color = "gray",
+                  box.padding = .1, point.padding = .05, segment.size = .3) 
+
+
+```
+
+## The next five plots show all individuals in the study, grouped by their study outcome. From the day of their first collection, their No/Yes/NA infection status is tracked. Within each outcome group, individuals are sorted by their number of days observed.
+
+```{r TT_infection_over_time, cache = T, echo = F, warning = F, message = F, results = "hide", fig.height = c(6), fig.width = 10, fig.pos = "ht!"}
+
+infection_over_time_plots = vector("list", nlevels(TT$`study outcome abbr.`))
+i = 0
+
+for (level in levels(TT$`study outcome abbr.`)) {
+  i = i+1
+infection_over_time_plots[[i]] = 
+  ggplot( TT %>% filter(`study outcome abbr.` == level) %>% arrange(total_days_since_first_collection), 
+          aes(x = days_since_first_collection, y = Any, group = per_code_factor)) +
+  geom_line(color = rainbow(8)[i+3]) +
+  facet_wrap(~per_code_factor, scales = "free_x") +
+  ylab(NULL) +
+  theme(strip.background = element_blank(), strip.text.x = element_blank(), legend.position = "bottom",
+        axis.ticks.x = element_blank(), axis.text.x = element_text(size = 6)) +
+  ggtitle(paste("No, Yes or NA to any infection vs. days since first observation", "\n", "Outcome = ", level))
+}
+
+infection_over_time_plots[[1]]
+infection_over_time_plots[[2]]
+```
+
+```{r TT_infection_over_time2, cache = T, echo = F, warning = F, message = F, results = "hide", fig.height = 4, fig.width = 10, fig.pos = "ht!"}
+infection_over_time_plots[[4]]
+infection_over_time_plots[[5]]
+```
+
+```{r TT_infection_over_time_completed_protocol, cache = T, echo = F, warning = F, message = F, results = "hide", fig.height = 14, fig.width = 10, fig.pos = "ht!"}
+infection_over_time_plots[[3]]
+```
+
+# Question 2: Describe the distribution of patient burn severity and connection to outcomes ####
+
+Observations:
+
+- Most have between 20 and 50 percent of their body burned. Range of TBSA in the study is 18 - 95.
+- Overall those with higher percentage burned are more likely for their outcome to be death or withdrawal for clinical reasons as opposed to completing the protocol or withdrawal by self or family. Those with "other" outcomes are also more likely to have higher burn percentages. The thicknesses of the lines in the plots by study outcome correspond to the number of people with that outcome.
+- Although most people had no infection, those with TBSA above 60 are more likely than not to have at least one infection.
+
+```{r TT_burn_severity, cache = T, echo = F}
+
+#Use "Partial Thickness" and "Full Thickness" sum to "TBSA"     
+#TT$`Partial Thickness` + TT$`Full Thickness`
+
+ggplot(TT_per) + geom_density(aes(x = `Partial Thickness`, color = "Partial thickness")) + geom_density(aes(x = `Full Thickness`, color = "Full thickness")) + geom_density(aes(x = TBSA, color = "Total (TBSA)")) + xlab("Thickness") +
+  theme_bw() + #+ scale_color_manual(name="Line Color", values=c(Partial = "red", Full = "black", Total = "blue"))
+  ggtitle("Distribution of percentage burned by burn classification")
+```
+
+```{r TT_burn_severity_outcomes, cache = T, fig.width = 10, fig.height = 12, echo = F}
+
+plot_burn_outcome_total = ggplot(TT_per) + geom_line(stat = 'density', aes(x = TBSA, color = `study outcome abbr.`, size = n_outcome/20), bw = 10, alpha = .7) + theme_bw() + theme(legend.position = "bottom", legend.text = element_text(size = 8)) +
+  guides(size = FALSE) +
+  ggtitle("Distribution of TOTAL percent burned by study outcome")
+
+plot_burn_outcome_full = ggplot(TT_per) + geom_line(stat = 'density', aes(x = `Full Thickness`, color = `study outcome abbr.`, size = n_outcome/20), bw = 10, alpha = .7) + theme_bw() + theme(legend.position = "none", legend.text = element_text(size = 8)) +
+  guides(size = FALSE) +
+  ggtitle("Distribution of FULL thickness percent burned by study outcome")
+
+plot_burn_outcome_partial = ggplot(TT_per) + geom_line(stat = 'density', aes(x = `Partial Thickness`, color = `study outcome abbr.`, size = n_outcome/20), bw = 10, alpha = .7) +  theme_bw() + theme(legend.position = "none", legend.text = element_text(size = 8)) +
+  guides(size = FALSE) +
+  ggtitle("Distribution of PARTIAL thickness percent burned by study outcome")
+
+plot_grid(plot_burn_outcome_total, plot_burn_outcome_full, plot_burn_outcome_partial, nrow = 3)
+```
+
+```{r TT_percent_burned_vs_infection, cache = T, echo = F, fig.keep = "first", results = "hide"}
+plot(TT_per$TBSA, as.numeric(TT_per$n_any>0) + rnorm(nrow(TT_per), 0, sd = .05), ylab = "Any infection in data", xlab = "TBSA")
+glm(n_any>0 ~ TBSA, data = TT_per, family = binomial)
+
+plot(TT_per$PDR, as.numeric(TT_per$n_any>0) + rnorm(nrow(TT_per), 0, sd = .05), ylab = "PDR", xlab = "TBSA")
+summary(glm(n_any>0 ~ PDR, data = TT_per, family = binomial))
+```
+
+# Question 3: Individual vital signs over time
+
+Observations
+
+- It's most common for first infection to occur with in a week of the first data collection, but there is considerable spread after that. 
+- Most individuals have their first collection within one day of admittance. 
+- Relatively few of the vitals have strong correlations, and about half of the ones that do are different types of blood pressure. This is true for aggregated data for infection patients/days and non. Individual-level data may be more telling. 
+
+### When does the first infection occur?
+
+```{r when_is_first_infection, eval = T, echo = T, warning = F, message = F}
+
+#Days from first collection to first infection
+table(TT_per$first_any)
+#Days from first collection to first blood infection
+table(TT_per$first_blood)
+
+days_from_admit_to_collection = difftime(TT_per$first_collection_date, TT_per$Admit_date, units = "days")
+#Days from admit to first collection
+table(days_from_admit_to_collection)
+#Days from admit to first infection
+table(TT_per$first_any + days_from_admit_to_collection)
+#Days from admit to first infection
+table(TT_per$first_blood + days_from_admit_to_collection)
+```
+
+### Correlation of vital signs
+
+The charts below are for data in aggregate. Individual-level data may be more telling. 
+
+```{r correlation of vitals, results = "hide", cache = T, echo = F, warning = F, message = F}
+
+cutoff1 = .5
+cat("Using in a cutoff of ", cutoff1)
+
+var_cor <- function(df, cutoff = cutoff1) {
+  V_corr = round(cor(df, use = "pairwise.complete.obs"), 2)
+  V_corr_b = V_corr>cutoff
+  highCorr = which(V_corr_b, arr.ind = T)
+  highCorr = highCorr[highCorr[,1] > highCorr[,2],]
+  highCorr = matrix(apply(highCorr, 1, function(x) colnames(V_corr)[x]), ncol = 2, byrow = T)
+  highCorr = cbind(highCorr, 1)
+  
+  V_corr_b = V_corr< -1*cutoff
+  highCorr2 = which(V_corr_b, arr.ind = T)
+  highCorr2 = highCorr2[highCorr2[,1] > highCorr2[,2],]
+  highCorr2 = as.matrix(highCorr2, ncol = 2)
+  highCorr2 = matrix(apply(highCorr2, 1, function(x) colnames(V_corr)[x]), ncol = 2, byrow = T)
+  highCorr2 = cbind(highCorr2, -1)
+  
+  highCorr = rbind(highCorr, highCorr2)
+  colnames(highCorr) = c("var1", "var2", "pos_neg")
+  return(highCorr)
+}
+
+cat("All data")
+var_cor(TT[, (!grepl("TIME_PERFORMED", names(TT)) & grepl("V_", names(TT))) & sapply(TT, class) == "numeric"])
+cat("People with least one infection")
+var_cor(TT[ TT$n_any > 0, (!grepl("TIME_PERFORMED", names(TT)) & grepl("V_", names(TT))) & sapply(TT, class) == "numeric"])
+cat("People with least one blood infection")
+var_cor(TT[ TT$n_blood > 0, (!grepl("TIME_PERFORMED", names(TT)) & grepl("V_", names(TT))) & sapply(TT, class) == "numeric"])
+cat("Only on infection days")
+var_cor(TT[ TT$Any =="Yes", (!grepl("TIME_PERFORMED", names(TT)) & grepl("V_", names(TT))) & sapply(TT, class) == "numeric"])
+```
+
+```{r correlation of vitals_heatmap, cache = T, echo = F, warning = F, message = F}
+
+person_to_look_at = as.character(sample(TT$per_code_factor, size = 1))
+person_cor = cor(filter(TT, PER_CODE == person_to_look_at) %>% 
+                   select(names(TT)[sapply(TT,class)==("numeric") & grepl(names(TT), pattern = "V_")]), use = "pairwise.complete.obs")
+
+plot_ly(x = rownames(person_cor), y = rownames(person_cor), z = person_cor) %>%
+  add_heatmap(colors = colorRamp(c("blue", "white", "red"))) %>% colorbar(limits = c(-1,1))
+
+overall_cor = cor(TT %>%
+                    select(names(TT)[sapply(TT,class)==("numeric") & grepl(names(TT), pattern = "V_")]),   use = "pairwise.complete.obs")
+plot_ly(x = rownames(overall_cor), y = rownames(overall_cor), z = overall_cor) %>%
+  add_heatmap(colors = colorRamp(c("blue", "white", "red"))) %>% colorbar(limits = c(-1,1))
+
+#plot(sort(person_cor[upper.tri(overall_cor, diag = F)]))
+#plot(sort(overall_cor[upper.tri(overall_cor, diag = F)]))
+```
+
+### Track many patient vitals over time for an individual patient.
+
+The red vertical line is the first blood infection and the blue is any infection.
+
+```{r TT_track_individuals_blood_infection, cache = T, echo = F, warning = F, message = F, results = "hide", fig.height = 10, fig.width = 10}
+
+vital_vars = str_extract(names(TT_blood_infection), "V_.*")[str_detect(names(TT_blood_infection), "V_.*")]
+
+# c("TT-001-00282", "TT-010-02112", "TT-001-01068") - some intersting ones
+
+person_to_look_at = sample(TT_blood_infection$PER_CODE, 1)
+df.tmp = filter(TT_blood_infection, PER_CODE == person_to_look_at) %>%
+  select(c(vital_vars,"first_blood_date", "first_any_date"))
+df.tmp = select(df.tmp, -one_of("V_ER_DEF_DATE_01","V_TIME_PERFORMED", "V_TIME_PERFORMED_1", "V_TIME_PERFORMED_2", "V_TIME_PERFORMED_3"))
+df.tmp = melt(df.tmp, id=c("PER_CODE","V_DATE_COLLECTION", "first_blood_date", "first_any_date"))
+ggplot(df.tmp) + geom_line(aes(x = V_DATE_COLLECTION, y = value, color = variable, group = variable)) + 
+  geom_vline(aes(xintercept = first_blood_date[1]), color = "red", linetype = 2) +
+  geom_vline(aes(xintercept = first_any_date[1]), color = "blue", linetype = 3) +
+  theme(legend.position = "top", axis.text.x = element_text(hjust = 1, angle = 90),
+        legend.text = element_text(size = 8), strip.text = element_text(size = 8)) + 
+  guides(color = FALSE) + 
+  facet_wrap(~variable, scales = "free_y")
+  
+```
+
+```{r TT_ZOOM, eval = F, cache = T, results = "hide", echo = F, fig.height = 3, warning = F}
+
+# Zoom in on the hard-to-read plots. 
+#They have a couple outliers so it's hard to see most of the distribution.
+#There are no obvious trends here and both variables have a high percentage of missing-ness (over 60 percent).
+
+TT_bilirubin = ggplot(filter(vitals, variable == "V_BILIRUBIN"), aes(x = value, color = onset_tomorrow)) + geom_freqpoly(stat = "density") + xlim(0, 15) + guides(color=FALSE) + ggtitle("V_BILIRUBIN")
+
+TT_FIO2 = ggplot(filter(vitals, variable == "V_FIO2"), aes(x = value, color = onset_tomorrow)) + geom_freqpoly(stat = "density") + xlim(0, 2) +  guides(color=FALSE) + ggtitle("V_FIO2")
+ 
+cowplot::plot_grid(TT_bilirubin, TT_FIO2)
+```
+
+### Track an individual vital over time for many patients. 
+
+The red vertical line is the first blood infection and the blue is any infection.
+
+```{r TT_track_individual_variables, cache = T, echo = F, warning = F, message = F, results = "hide", fig.height = 20, fig.width = 12}
+
+var1 = "V_TEMPERATURE"
+ggplot(TT %>% filter(n_any > 0)) +
+    geom_line(aes(x = V_DATE_COLLECTION, y = get(var1, pos = -1), group = per_code_factor, color = `study outcome abbr.`)) +
+    geom_vline(aes(xintercept = first_blood_date), color = "red", lty = 2) +
+    geom_vline(aes(xintercept = first_any_date), color = "blue", lty = 3) +
+    theme_bw() + 
+    theme(legend.position = "top", axis.text.x = element_text(hjust = 1, angle = 90),
+        axis.text.y = element_blank(),
+        legend.text = element_text(size = 8), strip.text = element_text(size = 8)) +
+    facet_wrap(~per_code_factor, scales = "free_x") +
+    ggtitle(paste(var1, "for individuals with at least one infection, all data"))
+
+ggplot(TT %>% filter(before_any == TRUE, n_any > 0)) +
+    geom_line(aes(x = V_DATE_COLLECTION, y = get(var1, pos = -1), group = per_code_factor, color = `study outcome abbr.`)) +
+    geom_vline(aes(xintercept = first_blood_date), color = "red", lty = 2) +
+    geom_vline(aes(xintercept = first_any_date), color = "blue", lty = 3) +
+    theme_bw() + 
+    theme(legend.position = "top", axis.text.x = element_text(hjust = 1, angle = 90),
+        axis.text.y = element_blank(),
+        legend.text = element_text(size = 8), strip.text = element_text(size = 8)) +
+    facet_wrap(~per_code_factor, scales = "free_x") +
+    ggtitle(paste(var1, "for individuals with at least one infection, data up to first infection"))
+```
+
+### Restrict to individuals with at least one blood infection
+
+```{r TT_track_individual_variables_blood_infection, cache = T, echo = F, warning = F, message = F, results = "hide", fig.height = 13, fig.width = 12}
+
+var1 = "V_TEMPERATURE"
+
+vital1 = ggplot(TT_blood_infection, aes(background = `Inhalation Injury`)) +
+    geom_line(aes(x = days_since_first_collection, y = get(var1, pos = -1), group = per_code_factor, color = `study outcome abbr.`)) +
+    geom_point(data = filter(TT_blood_infection, !is.na(V_TIME_PERFORMED_1)),
+               aes(x = days_since_first_collection, y = get(var1, pos = -1), group = per_code_factor),
+               fill = "blue", stroke = .1, size = 1, alpha = .5, shape = 21) +
+    geom_point(data = filter(TT_blood_infection, !is.na(V_TIME_PERFORMED_2)),
+               aes(x = days_since_first_collection, y = get(var1, pos = -1), group = per_code_factor),
+               fill = "green", stroke = .1, size = .5, alpha = .5, shape = 21) +
+    geom_point(data = filter(TT_blood_infection, Blood), 
+               aes(x = days_since_first_collection, y = get(var1, pos = -1), group = per_code_factor),
+               fill = "red", stroke = .1, shape = 21, size = 2) +
+    scale_fill_manual(labels = c("Blood CBC", "Blood Chemistry","Blood infection")) +
+    geom_hline(yintercept = 39, linetype = 2, size = .1) +
+    geom_hline(yintercept = 36.5, linetype = 2, size = .1) +
+    #geom_vline(aes(xintercept = first_blood_date), color = "red", lty = 2) +
+    #geom_vline(aes(xintercept = first_any_date), color = "blue", lty = 3) +
+    theme_bw() +
+    theme(legend.position = "top", axis.text.x = element_text(hjust = 1, angle = 45, size = 6),
+        axis.text.y = element_blank(),
+        legend.text = element_text(size = 8), 
+        strip.text = element_text(size = 6),
+        strip.background = element_blank()) +
+    ylab("var1") + 
+    facet_wrap(~per_code_factor, scales = "free_x") +
+    ggtitle(paste(var1, "for patients with at least one blood infection"))
+
+vital1
+```
+
+# Question 4: (pre-modeling) Which individual vital signs over time may be predictive?
+
+## Compare infection days vs. day-before infection vs. neither for individuals who have at least one infection, *NOT* restricted to first infection
+
+Distributions of vital statistics by infection status excluding outliers.
+
+```{r TT_Compare_vitals_all_days, eval = T, echo = F, cache = T, fig.height = 12, fig.width = 10, warning = F, message=F, results = "hide", fig.keep = "last"}
+
+# Subset to vital vars
+id_vars = c("Any", "onset_tomorrow", "Onset", "before_any", "n_any", "period1_before", "period2_before", "period3_before", "n_blood")
+vitals_wide = TT[ grepl("V_", names(TT)) | names(TT) %in% id_vars] %>% filter(n_any > 0)
+vitals = melt(vitals_wide, id.vars = id_vars, varying = names(vitals_wide)[grepl("V_", names(vitals_wide))])
+vitals_time = select(vitals, contains("TIME")) #need>
+vitals_date = select(vitals, contains("DATE")) #need?
+vitals_date = filter(vitals_date, !is.na(vitals$value)) #need?
+vitals = filter(vitals, !grepl(pattern = "TIME|DATE", variable) & !is.na(value))
+vitals$value = as.numeric(vitals$value)
+
+# Infection vs. Non-infection vs. Pre-Infection
+set_breaks = function(limits) {
+     round(seq(limits[1], limits[2], length.out = 20), 1)
+}
+
+# This version includes outliers
+ggplot(vitals, aes(x = value, group = onset_tomorrow, color = onset_tomorrow)) + 
+  geom_freqpoly(stat = "density") + 
+  scale_x_continuous(breaks = set_breaks) +
+  facet_wrap(~variable, scales = "free", nrow = 10) + 
+  theme(text = element_text(size=12), axis.text.x = element_text(angle=90, hjust=1, size = 8),
+        axis.text.y = element_text(size = 8),
+        legend.position = "bottom")
+
+# Remove outliers and NA onset_tomorrow which is mostly the last reading for an individual
+vitals.tmp = filter(vitals, !is.na(onset_tomorrow)) %>% group_by(variable) %>% 
+  dplyr::filter(value > quantile(value, .02, na.rm = T) & value < quantile(value, .98, na.rm = T))
+
+# Only compare Vitals for Day before Infection vs. Infection vs. Neither
+ggplot(vitals.tmp, aes(x = value, group = onset_tomorrow, color = onset_tomorrow)) + 
+  geom_freqpoly(stat = "density") + 
+  scale_x_continuous(breaks = set_breaks) +
+  facet_wrap(~variable, scales = "free", nrow = 10) + 
+  ggtitle("Vitals for Day before Infection vs. Infection vs. Neither") + theme_bw() +
+  theme(text = element_text(size=12), axis.text.x = element_text(angle=90, hjust=1, size = 8),
+        axis.text.y = element_text(size = 8),
+        legend.position = "bottom", strip.text = element_text(size=6),
+        strip.text.x = element_text(margin = margin(0, 0, 0, 0, "cm")),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.title = element_blank(),
+        panel.background = element_blank())
+
+```
+
+Based on Figure \ref{fig:TT_Overall_Plot} below we'd suspect that some variables may be correlated with infection or pre-infection, including heart rate, temperature, platelet count and sodium.
+
+There are a few hundred NA entries (out of about 15,000) in "onset_tomorrow", most due to not having next-day readings for an individual, which means that the data is not missing at random. Some NA data is also due to NA entries in the onset variable.
+
+## Now **RESTRICT** to first infection
+```{r TT_Compare_vitals_pre_infection_days, cache = T, fig.height = 12, fig.width = 10, warning = F, echo = F, results = "hide", message=F, fig.keep = "last", fig.pos = "h!", fig.cap = "Distributions of vital statistics by infection status excluding outliers.", fig.pos = "h!", out.extra = '', dependson = c("TT_Compare_vitals_all_days")}
+
+vitals_wide_pre_any_infection = filter(vitals_wide,  before_any)
+vitals_pre_any_infection = melt(vitals_wide_pre_any_infection, id.vars = id_vars, varying = names(vitals_wide)[grepl("V_", names(vitals_wide))])
+vitals_pre_any_infection = filter(vitals_pre_any_infection, !grepl(pattern = "TIME|DATE", variable) & !is.na(value))
+vitals_pre_any_infection$value = as.numeric(vitals_pre_any_infection$value)
+
+# Remove outliers and NA onset_tomorrow which is mostly the last reading for an individual
+vitals.tmp = filter(vitals_pre_any_infection, !is.na(onset_tomorrow)) %>% group_by(variable) %>% 
+  dplyr::filter(value > quantile(value, .02, na.rm = T) & value < quantile(value, .98, na.rm = T))
+ 
+ggplot(vitals.tmp, aes(x = value, group = period1_before, color = period1_before)) + 
+  geom_freqpoly(stat = "density") + 
+  scale_x_continuous(breaks = set_breaks) +
+  facet_wrap(~variable, scales = "free", nrow = 10) + 
+  ggtitle("Vitals for Day before Infection vs. Neither (no infection) -- ONLY leading up to first infection") + theme_bw() +
+  theme(text = element_text(size=12), axis.text.x = element_text(angle=90, hjust=1, size = 8),
+        axis.text.y = element_text(size = 8),
+        legend.position = "bottom", strip.text = element_text(size=6),
+        strip.text.x = element_text(margin = margin(0, 0, 0, 0, "cm")),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.title = element_blank(),
+        panel.background = element_blank())
+```
+
+### Now look at the period before infection (1, 2 or 3 day) instead of only the day before, comparing with the first infection day and non-infection days, still removing days after the first infection (note color change)
+```{r TT_Compare_vitals_pre_infection_period, cache = T, fig.height = 10, fig.width = 15, warning = F, echo = F, results = "hide", message=F, fig.keep = "none", fig.pos = "h!"}
+
+# 1 - day period ----
+
+vitals_wide_1_days_pre_infection = filter(vitals_wide,  before_any | period1_before == "First infection")
+vitals_1_days_pre_infection = melt(vitals_wide_1_days_pre_infection, id.vars = id_vars, varying = names(vitals_wide)[grepl("V_", names(vitals_wide))])
+vitals_1_days_pre_infection = filter(vitals_1_days_pre_infection, !grepl(pattern = "TIME|DATE", variable) & !is.na(value))
+vitals_1_days_pre_infection$value = as.numeric(vitals_1_days_pre_infection$value)
+
+# Remove outliers and NA onset_tomorrow which is mostly the last reading for an individual
+vitals.tmp = filter(vitals_1_days_pre_infection, !is.na(period1_before)) %>% group_by(variable) %>% 
+  dplyr::filter(value > quantile(value, .02, na.rm = T) & value < quantile(value, .98, na.rm = T))
+vitals.tmp$period1_before = as.factor(vitals.tmp$period1_before)
+relevel(vitals.tmp$period1_before, ref = "Neither")
+#vitals.tmp  = vitals.tmp %>% group_by(period1_before, variable) %>% mutate(lwd1 = n()) %>% ungroup() -- may use later
+
+# Only compare Vitals for Day before Infection vs. Infection vs. Neither
+ggplot_period1 = ggplot(vitals.tmp, aes(x = value, group = period1_before, color = period1_before), coord_fixed(ratio=10)) + 
+  geom_freqpoly(stat = "density") + 
+  scale_x_continuous(breaks = set_breaks) +
+  facet_wrap(~variable, scales = "free", ncol = 1) + 
+  ggtitle("Vitals for one day before Infection vs. First day vs. Neither") + theme_bw() +
+  theme(text = element_text(size=12), axis.text.x = element_text(angle=90, hjust=1, size = 8),
+        axis.text.y = element_text(size = 8),
+        legend.position = "bottom", strip.text = element_text(size=6),
+        strip.text.x = element_text(margin = margin(0, 0, 0, 0, "cm")),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.title = element_blank(),
+        panel.background = element_blank())
+ggsave("ggplot_period1.png", plot = ggplot_period1, width = 3, height = 30)
+# 2 - day period ----
+
+vitals_wide_2_days_pre_infection = filter(vitals_wide,  before_any | period2_before == "First infection")
+vitals_2_days_pre_infection = melt(vitals_wide_2_days_pre_infection, id.vars = id_vars, varying = names(vitals_wide)[grepl("V_", names(vitals_wide))])
+vitals_2_days_pre_infection = filter(vitals_2_days_pre_infection, !grepl(pattern = "TIME|DATE", variable) & !is.na(value))
+vitals_2_days_pre_infection$value = as.numeric(vitals_2_days_pre_infection$value)
+
+# Remove outliers and NA onset_tomorrow which is mostly the last reading for an individual
+vitals.tmp = filter(vitals_2_days_pre_infection, !is.na(period2_before)) %>% group_by(variable) %>% 
+  dplyr::filter(value > quantile(value, .02, na.rm = T) & value < quantile(value, .98, na.rm = T))
+vitals.tmp$period2_before = as.factor(vitals.tmp$period2_before)
+relevel(vitals.tmp$period2_before, ref = "Neither")
+
+# Only compare Vitals for Day before Infection vs. Infection vs. Neither
+ggplot_period2 = ggplot(vitals.tmp, aes(x = value, group = period2_before, color = period2_before), coord_fixed(ratio=10)) + 
+  geom_freqpoly(stat = "density") + 
+  scale_x_continuous(breaks = set_breaks) +
+  facet_wrap(~variable, scales = "free", ncol = 1) + 
+  ggtitle("Vitals for two days before Infection vs. First day vs. Neither") + theme_bw() +
+  theme(text = element_text(size=12), axis.text.x = element_text(angle=90, hjust=1, size = 8),
+        axis.text.y = element_text(size = 8),
+        legend.position = "bottom", strip.text = element_text(size=6),
+        strip.text.x = element_text(margin = margin(0, 0, 0, 0, "cm")),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.title = element_blank(),
+        panel.background = element_blank())
+
+# 3 - day period ----
+
+vitals_wide_3_days_pre_infection = filter(vitals_wide,  before_any | period3_before == "First infection")
+vitals_3_days_pre_infection = melt(vitals_wide_3_days_pre_infection, id.vars = id_vars, varying = names(vitals_wide)[grepl("V_", names(vitals_wide))])
+vitals_3_days_pre_infection = filter(vitals_3_days_pre_infection, !grepl(pattern = "TIME|DATE", variable) & !is.na(value))
+vitals_3_days_pre_infection$value = as.numeric(vitals_3_days_pre_infection$value)
+
+# Remove outliers and NA onset_tomorrow which is mostly the last reading for an individual
+vitals.tmp = filter(vitals_3_days_pre_infection, !is.na(period3_before)) %>% group_by(variable) %>% 
+  dplyr::filter(value > quantile(value, .02, na.rm = T) & value < quantile(value, .98, na.rm = T))
+vitals.tmp$period3_before = as.factor(vitals.tmp$period3_before)
+relevel(vitals.tmp$period3_before, ref = "Neither")
+
+# Only compare Vitals for Day before Infection vs. Infection vs. Neither
+ggplot_period3 = ggplot(vitals.tmp, aes(x = value, group = period3_before, color = period3_before), coord_fixed(ratio=10)) + 
+  geom_freqpoly(stat = "density") + 
+  scale_x_continuous(breaks = set_breaks) +
+  facet_wrap(~variable, scales = "free", ncol = 1) + 
+  ggtitle("Vitals for three days before Infection vs. First day vs. Neither") + theme_bw() +
+  theme(text = element_text(size=12), axis.text.x = element_text(angle=90, hjust=1, size = 8),
+        axis.text.y = element_text(size = 8),
+        legend.position = "bottom", strip.text = element_text(size=6),
+        strip.text.x = element_text(margin = margin(0, 0, 0, 0, "cm")),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.title = element_blank(),
+        panel.background = element_blank())
+  
+ggsave("ggplot_period1.png", plot = ggplot_period1, width = 3, height = 30)
+ggsave("ggplot_period2.png", plot = ggplot_period2, width = 3, height = 30)
+ggsave("ggplot_period3.png", plot = ggplot_period3, width = 3, height = 30)
+```
+![](ggplot_period1.png){width=300px} ![](ggplot_period2.png){width=300px} ![](ggplot_period3.png){width=300px}
+
+## Now for BLOOD INFECTION ONLY, compare infection days vs. day-before infection vs. neither for individuals who have at least one infection, *NOT* restricted to first infection
+
+```{r TT_Compare_vitals_pre_infection_and_infection, cache = T, fig.height = 12, fig.width = 10, warning = F, echo = F, results = "hide", message=F, fig.keep = "last", fig.pos = "h!", fig.cap = "Distributions of vital statistics by infection status excluding outliers.", fig.pos = "h!", out.extra = ''}
+
+vitals_wide_any_or_pre_infection = filter(vitals_wide,  n_blood > 0 & (before_any | (Any == "Yes")))
+vitals_any_or_pre_infection = melt(vitals_wide_any_or_pre_infection, id.vars = id_vars, varying = names(vitals_wide)[grepl("V_", names(vitals_wide))])
+vitals_any_or_pre_infection = filter(vitals_any_or_pre_infection, !grepl(pattern = "TIME|DATE", variable) & !is.na(value))
+vitals_any_or_pre_infection$value = as.numeric(vitals_any_or_pre_infection$value)
+
+# Remove outliers and NA onset_tomorrow which is mostly the last reading for an individual
+vitals.tmp = filter(vitals_any_or_pre_infection, !is.na(onset_tomorrow)) %>% group_by(variable) %>% 
+  dplyr::filter(value > quantile(value, .02, na.rm = T) & value < quantile(value, .98, na.rm = T))
+
+ggplot(vitals.tmp, aes(x = value, group = onset_tomorrow, color = onset_tomorrow)) + 
+  geom_freqpoly(stat = "density") + 
+  scale_x_continuous(breaks = set_breaks) +
+  facet_wrap(~variable, scales = "free", nrow = 10) + 
+  ggtitle("Blood infection: Vitals for Day before Infection vs. Infection vs. Neither") + theme_bw() +
+  theme(text = element_text(size=12), axis.text.x = element_text(angle=90, hjust=1, size = 8),
+        axis.text.y = element_text(size = 8),
+        legend.position = "bottom", strip.text = element_text(size=6),
+        strip.text.x = element_text(margin = margin(0, 0, 0, 0, "cm")),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.title = element_blank(),
+        panel.background = element_blank())
+```
+
+Investigation of ICU Days and PDR (predicted death rate) show that those with current or iminent infection are generally in worse health than the other groups. This is important for recognizing that factors like elevated heart rate may be due to general poor health instead of impending infection. 
+
+Next we look at the observed patterns more formally with a multinomial model where the possible outcomes are as labelled in Figure \ref{fig:TT_Overall_Plot} - current infection, day before infection onset, and neither of those cases. The NA case is exluded. I used a penalized version of multinomial regression from `glmnet` in \texttt{R} with cross-validation to select variables. The tables below show the fitted non-zero coefficients using a less restrictive and more restrictive penalty term. The input data was standardized before fitting the model so that the coefficient magnitudes would be comparable, though they lose interpretability as a result. <!--more restrictive = one standard error from that which minimizes the cross-validated error.-->
+
+<!--As a first pass I tried backward step selection with unpenalized multinomial regression after removing variables related to outcome, data of collection and those with high %NA (most are a quarter missing or less, but 7 are over 60%). This isn't a good variable selection method and the results didn't pass the smell test.-->
+
+<!--A weakness of both methods is the number of rows you have to remove completely due to some data beings missing-->
+
+
+# Decision Trees ####
+
+```{r decision_trees, eval = F, echo = F, warning = F, message = F, results = "hide", fig.height = 13, fig.width = 12}
+
+# see burn_deta_EDA.R for now. Nothing finalized yet.
+
+```
+
+
+# Multinomial Models: 
+
+- 1. All data. 
+- 2. Data to first infection and all infection days.
+- 3. Data to first infection.
+<!-- 4. Data to first infection and all blood infection days.-->
+
+```{r TT_multinom_all_data, cache = T, fig.height = 10, warning = F, echo = F, results = "hide", message=F, eval = T, fig.keep = "none"}
+
+# Fit multinomial models to see which factors are correlated with day-before-onset
+
+library(glmnet)
+library(nnet)
+library(lmtest)
+
+# 1. Most Basic model where we include all the data, even after first infection - this can hide relationships ---- 
+
+vitals.df = vitals_wide
+
+#we'll exlude vars with lots of NAs
+highNA = names(vitals_wide)[apply(vitals_wide, 2, function(x) mean(is.na(x))) > .6]
+
+#Create a model frame without outcome or nuisance variables (like dates) or high NA variables
+vitals.df = vitals.df[, !names(vitals_wide) %in% 
+                                            c(id_vars[id_vars!="onset_tomorrow"],
+                                              "V_DATE_COLLECTION", "V_ER_DEF_DATE_01",
+                                              "V_TIME_PERFORMED", "V_TIME_PERFORMED_1", "V_TIME_PERFORMED_2",
+                                              "V_TIME_PERFORMED_3", highNA)]
+                                            
+vitals.df$onset_tomorrow = as.factor(vitals.df$onset_tomorrow)
+relevel(vitals.df$onset_tomorrow, ref = "Neither")
+
+# Pre-process data
+vitals.x = na.omit(vitals.df)
+vitals.y = as.factor(vitals.x$onset_tomorrow)
+relevel(vitals.y, ref = "Neither")
+vitals.x = as.matrix(vitals.x[,-which(colnames(vitals.x) == "onset_tomorrow")])
+vitals.x = apply(vitals.x, 2, as.numeric)
+vitals.x = scale(vitals.x, center = F)
+colnames(vitals.x) = names(vitals.df)[-which(colnames(vitals.df) == "onset_tomorrow")]
+
+# Model
+# TT_glmnet_all_data = glmnet(vitals.x, y = vitals.y, family = "multinomial", type.multinomial = "grouped")
+
+# CV model
+TT_cvfit_all_data = cv.glmnet(vitals.x, vitals.y, family="multinomial", type.multinomial = "grouped", nfolds = 5)
+
+```
+
+```{r TT_multinom_any_or_pre_infection, cache = T, fig.height = 10, warning = F, echo = F, results = "hide", message=F, eval = T, fig.keep = "none"}
+
+# 2. Exclude data after first infection
+
+vitals.df = vitals_wide_any_or_pre_infection
+
+#we'll exlude vars with lots of NAs
+highNA = names(vitals.df)[apply(vitals.df, 2, function(x) mean(is.na(x))) > .6]
+
+#Create a model frame without outcome or nuisance variables (like dates) or high NA variables
+vitals.df = vitals.df[, !names(vitals.df) %in% 
+                                            c(id_vars[id_vars!="onset_tomorrow"],
+                                              "V_DATE_COLLECTION", "V_ER_DEF_DATE_01",
+                                              "V_TIME_PERFORMED", "V_TIME_PERFORMED_1", "V_TIME_PERFORMED_2",
+                                              "V_TIME_PERFORMED_3", highNA)]
+                                            
+vitals.df$onset_tomorrow = as.factor(vitals.df$onset_tomorrow)
+relevel(vitals.df$onset_tomorrow, ref = "Neither")
+
+# Pre-process data
+vitals.x = na.omit(vitals.df)
+vitals.y = as.factor(vitals.x$onset_tomorrow)
+relevel(vitals.y, ref = "Neither")
+vitals.x = as.matrix(vitals.x[,-which(colnames(vitals.x) =="onset_tomorrow")])
+vitals.x = apply(vitals.x, 2, as.numeric)
+vitals.x = scale(vitals.x, center = F)
+colnames(vitals.x) = names(vitals.df)[-which(colnames(vitals.df) == "onset_tomorrow")]
+
+# Model
+# TT_glmnet_any_or_pre_infection = glmnet(vitals.x, y = vitals.y, family = "multinomial", type.multinomial = "grouped")
+
+# CV model
+TT_cvfit_any_or_pre_infection = cv.glmnet(vitals.x, vitals.y, family="multinomial", type.multinomial = "grouped", nfolds = 5)
+```
+
+```{r TT_multinom_data_to_first_infection, cache = T, fig.height = 10, warning = F, echo = F, results = "hide", message=F, eval = T, fig.keep = "none"}
+
+# 3. Exclude data after first infection
+
+vitals.df = vitals_wide_pre_any_infection
+
+#we'll exlude vars with lots of NAs
+highNA = names(vitals.df)[apply(vitals.df, 2, function(x) mean(is.na(x))) > .6]
+
+#Create a model frame without outcome or nuisance variables (like dates) or high NA variables
+vitals.df = vitals.df[, !names(vitals.df) %in% 
+                                            c(id_vars[id_vars!="onset_tomorrow"],
+                                              "V_DATE_COLLECTION", "V_ER_DEF_DATE_01",
+                                              "V_TIME_PERFORMED", "V_TIME_PERFORMED_1", "V_TIME_PERFORMED_2",
+                                              "V_TIME_PERFORMED_3", highNA)]
+                                            
+vitals.df$onset_tomorrow = as.factor(vitals.df$onset_tomorrow)
+relevel(vitals.df$onset_tomorrow, ref = "Neither")
+
+# Pre-process data
+vitals.x = na.omit(vitals.df)
+vitals.y = as.factor(vitals.x$onset_tomorrow)
+vitals.x = as.matrix(vitals.x[,-which(colnames(vitals.x) == "onset_tomorrow")])
+vitals.x = apply(vitals.x, 2, as.numeric)
+vitals.x = scale(vitals.x, center = F)
+colnames(vitals.x) = names(vitals.df)[-which(colnames(vitals.df) == "onset_tomorrow")]
+
+# Model
+# TT_glmnet_any_or_pre_infection = glmnet(vitals.x, y = vitals.y, family = "multinomial", type.multinomial = "grouped")
+
+# Model
+#TT_glmnet_pre_any_infection = glmnet(vitals.x, y = vitals.y, family = "multinomial", type.multinomial = "grouped")
+
+# CV model
+TT_cvfit_pre_any_infection = cv.glmnet(vitals.x, vitals.y, family="multinomial", nfolds = 5)
+```
+
+```{r TT_multinom_glm_output, cache = T, fig.height = 10, warning = F, echo = F, message=F, eval = T, fig.keep = "none", dependson = c("TT_multinom_all_data", "TT_multinom_any_or_pre_infection", "TT_multinom_data_to_first_infection")}
+
+# 1. Model with all data ----
+
+TT_cvfit = TT_cvfit_all_data
+print("1. Model with all data")
+  
+#plot(TT_glmnet, label = T)
+#plot(TT_cvfit)
+
+print("Coefficients -- smaller penalty")
+  
+#Minimum CV penalty
+TT_cvfit.results = round(as.matrix(do.call("cbind", coef(TT_cvfit, s = TT_cvfit$lambda.min))), 4)
+colnames(TT_cvfit.results) = c("Current infection", "Day Before Infection", "Neither")
+TT_cvfit.results = TT_cvfit.results[order(TT_cvfit.results[,1]), ]
+TT_cvfit.results[TT_cvfit.results[,1] != 0, ]
+
+print("Coefficients - larger penalty (lambda.1se*.8)")
+
+TT_cvfit.results = round(as.matrix(do.call("cbind", coef(TT_cvfit, s = TT_cvfit$lambda.1se*.8))), 4)
+colnames(TT_cvfit.results) = c("Current Infection", "Day Before Infection", "Neither")
+TT_cvfit.results = TT_cvfit.results[order(TT_cvfit.results[,1]), ]
+TT_cvfit.results[TT_cvfit.results[,1] != 0, ]
+
+# 2. Model with data to first infection and infection days ----
+
+TT_cvfit = TT_cvfit_any_or_pre_infection
+print("2. Model with data to first infection and infection days")
+
+
+print("Coefficients -- smaller penalty")
+  
+#Minimum CV penalty
+TT_cvfit.results = round(as.matrix(do.call("cbind", coef(TT_cvfit, s = TT_cvfit$lambda.min))), 4)
+colnames(TT_cvfit.results) = c("Current Infection", "Day Before Infection", "Neither")
+TT_cvfit.results = TT_cvfit.results[order(TT_cvfit.results[,1]), ]
+TT_cvfit.results[TT_cvfit.results[,1] != 0, ]
+
+print("Coefficients - larger penalty (lambda.1se*.5)")
+
+TT_cvfit.results = round(as.matrix(do.call("cbind", coef(TT_cvfit, s = TT_cvfit$lambda.1se*.5))), 4)
+colnames(TT_cvfit.results) = c("Current Infection", "Day Before Infection", "Neither")
+TT_cvfit.results = TT_cvfit.results[order(TT_cvfit.results[,1]), ]
+TT_cvfit.results[TT_cvfit.results[,1] != 0, ]
+
+# 3. Model with data to first infection ----
+
+TT_cvfit = TT_cvfit_pre_any_infection
+print("3. Model with data to first infection")
+
+
+print("Coefficients -- smaller penalty (lambda.min*.5)")
+  
+#Minimum CV penalty
+TT_cvfit.results = as.matrix(do.call("cbind", coef(TT_cvfit, s = TT_cvfit$lambda.min*.5)))
+colnames(TT_cvfit.results) = c("Day Before Infection", "Neither")
+TT_cvfit.results = TT_cvfit.results[order(TT_cvfit.results[,1]), ]
+TT_cvfit.results[TT_cvfit.results[,1] != 0, ]
+
+print("Coefficients - larger penalty")
+
+TT_cvfit.results = as.matrix(do.call("cbind", coef(TT_cvfit, s = TT_cvfit$lambda.1se)))
+colnames(TT_cvfit.results) = c("Day Before Infection", "Neither")
+TT_cvfit.results = TT_cvfit.results[order(TT_cvfit.results[,1]), ]
+TT_cvfit.results[TT_cvfit.results[,1] != 0, ]
+
+```
+
+<!--# Models restricted to blood infection-->
+
+<!--# Models with different lasgs (period of two or three days before infection instead of one day before)-->
+
+```{r other_modeling, eval = F, echo = F, cache = T}
+# Other fits ---
+
+# multinom model
+# TT_multinom = multinom(onset_tomorrow ~ . , data = na.omit(vitals.df)) #lose ALMOST HALF of data
+# rough z values
+# round(coefficients(TT_multinom)/summary(TT_multinom)$standard.errors, 2)
+
+# Compare variable selection to backward step selection
+# TT_step = step(TT_multinom, direction = "backward")
+# rough z values
+# round(coefficients(TT_step)/summary(TT_step)$standard.errors, 2)
+```
+
+
+Not surprisingly, temperature has by far the largest coefficient values. Second is the MODS score (Multiple Organ Dysfunction Score), and I'm not sure what that means or if it makes sense in context. As expected by the study authors, respiratory rate, white blood cell count, and heart rate are somewhat correlated with the outcomes. In the more limited coefficient set, only the Glascow coma scale is a negative predictor, i.e.  the higher the score the less likely an infection outcome. Also, all coefficients are stronger for current infection than day before infection, with opposite sign for no infection. The same is not true of the larger set. 
+
+Another noteable outcome is that the two variables included to control for severity of condition are included in the larger model but with moderate coefficient values, and they are absent in the smaller model
+
+
+# PCR Study EDA
+ 
+```{r PCR, cache = T, eval = T, echo = F, warning = F, message=F, results = "hide"}
+
+#The first question to answer for the PCR data is which of the tabs we should be lookings at
+
+#Notes about PCR data from the README
+
+## The EOS Discharge form gives a list of all the patients recruited and various summary metrics (e.g., ventilator days, icu days, hospital disposition). We may want to drop any patients withdrawn from the study (V_PRIMARY_EOS).
+## The ENROLLMENT form gives demographic and injury information as well as vitals on admission.
+## The Daily Collection - Labs form is the main data worksheet with temporal information on labs, vitals and infections.
+## Column AS "SEPSIS_STATUS" indicates whether the patient was determined to have a new onset of sepsis at that time point. That's our primary outcome of interest.
+
+#PCR Data and Dictionary
+sheets #shows file data structure
+PCR = spreadsheets[["Copy of PCR DATA SET 03-19-2018_SEPSIS.xlsx"]] #terminology for tab 8: Adverse Events (SE) and Serious Adverse Events (SAE).
+PCR_dict = spreadsheets[["PCR_SEPSIS_DICTIONARY.xlsx"]]
+
+# Dimenstions of PCR data tabs?
+sapply(PCR, dim)
+
+# how much overlap in people between those tabs?
+ids = unique(unlist(lapply(PCR, select, "PER_CODE"))) #223
+lapply(PCR, function(x) {mean(ids %in% x$PER_CODE)})
+
+# It seems like PCR[[4]] has additional information about infecti; ons as compared to PCR[[3]], but I don't know how to link them since PCR[[4]] has no V_DATE_COLLECTION variable
+names(PCR[[3]])[names(PCR[[3]])%in%names(PCR[[4]])] #only first 4: "STUDY_NUMBER"     "PER_CODE"         "PATPROT_PATSTDID" "FORM_STATUS"   
+names(PCR[[4]])[names(PCR[[4]])%in%names(PCR[[3]])]
+
+# I think if sepsis status is positive a lab is taken in PCR[[4]], but again don't know how to link the data
+```
+
+The figure compares the distribution of sepsis days per patient in the PCR study to the distribution of "onset" days per patient in the TT study. (According to the project readme, the variable "SEPSIS_STATUS" in the PCR data indicates whether the patient was determined to have a new onset of sepsis at that time point.) It's similar overall, but with more patients in the PCR study having very high numbers of sepsis days.
+ 
+```{r PCR_labs, cache = T, eval = T, echo = F, warning = F, message = F, results = "hide", fig.height = 3}
+
+PCR_labs = PCR[[3]]
+PCR_labs$SEPSIS_STATUS = as.numeric(PCR_labs$SEPSIS_STATUS)
+
+# summary data by patient
+PCR_labs_summary = PCR_labs %>% group_by(PER_CODE) %>% arrange(V_DATE_COLLECTION) %>%
+                        summarize(
+                          first = ifelse(sum(SEPSIS_STATUS > 0, na.rm = T), 
+                          which(SEPSIS_STATUS==1)[1], 0),
+                          n_sepsis = sum(SEPSIS_STATUS, na.rm = T))
+
+# Compare infections per patient
+days_inf = data.frame(study = c(rep("PCR", nrow(PCR_labs_summary)), rep("TT", nrow(TT_per))), Days = c(PCR_labs_summary$n_sepsis, TT_per$n_any)) 
+
+ggplot(days_inf, aes(x = Days, group = study, fill = study)) + geom_histogram(position = "dodge", bins = 40) + 
+  facet_wrap(~study, nrow = 1) + theme_bw()
+
+```
+
+I will simplify this section by only comparing sepsis days to non-sepsis days, and I will see if I get a similar list of variables associated with infection as in the TT study. 
+
+```{r PCR_plots, cache = T, eval = T, echo = F, warning = F, message = F, results = "hide", fig.height = 9, fig.keep = "last", fig.cap = "Distribution of vitals for sepsis vs. non-sepsis patients evaluated daily, excluding outliers", out.extra = ''}
+
+# Compare vitals on days with sepsis to days without
+sheets
+lapply(PCR, function(x) {sum(grepl("", names(x)))}) #where is Age and ICU days?
+
+#Add age and ICU days to the data
+PCR_vitals_wide = left_join(PCR_labs, PCR[[1]][,c("PER_CODE", "V_PATIENT_AGE")])
+PCR_vitals_wide = left_join(PCR_vitals_wide, PCR[[9]][,c("PER_CODE", "V_DAYS_ICU")])
+
+dim(PCR_vitals_wide); dim(PCR[[3]]) #check didn't change number of rows
+names(PCR_vitals_wide)
+
+#Keep vars previously examined
+PCR_vitals_wide = PCR_vitals_wide[,names(PCR_vitals_wide) %in% c(unique(as.character(vitals$variable)), 
+                  "V_SODIUM_ION", "V_POTASSIUM_ION", "V_PATIENT_AGE", "V_DAYS_ICU", "SEPSIS_STATUS")]
+
+# make long
+PCR_vitals = melt(PCR_vitals_wide, id.vars = c("SEPSIS_STATUS"))
+PCR_vitals$SEPSIS_STATUS = as.factor(PCR_vitals$SEPSIS_STATUS)
+levels(PCR_vitals$SEPSIS_STATUS) = c("FALSE", "TRUE")
+PCR_vitals$value = as.numeric(PCR_vitals$value)
+head(PCR_vitals)
+
+ggplot(PCR_vitals, aes(x = value, color = SEPSIS_STATUS)) + 
+  geom_freqpoly(stat = "density") + 
+  scale_x_continuous(breaks = set_breaks) +
+  facet_wrap(~variable, scales = "free") + 
+  ggtitle("PCR Study - Vitals for Sepsis vs. Non-Sepsis") +
+  theme(text = element_text(size=8), axis.text.x = element_text(angle=90, hjust=1), 
+        legend.position = "bottom")
+
+PCR_vitals_trunc = PCR_vitals %>% group_by(variable) %>% 
+  dplyr::filter(value > quantile(value, .02, na.rm = T), value < quantile(value, .98, na.rm = T))
+
+ggplot(PCR_vitals_trunc, aes(x = value, group = SEPSIS_STATUS, color = SEPSIS_STATUS)) + 
+  geom_freqpoly(stat = "density") + 
+  scale_x_continuous(breaks = set_breaks) +
+  facet_wrap(~variable, scales = "free", ncol = 4) + 
+ #ggtitle("PCR Study - Vitals for Sepsis vs. Non-Sepsis") 
+  theme_bw() +
+  theme(text = element_text(size=8), axis.text.x = element_text(angle=90, hjust=1), 
+        legend.position = "bottom", strip.text = element_text(size=6),
+        strip.text.x = element_text(margin = margin(0, 0, 0, 0, "cm")),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        legend.title = NULL)
+```
+
+Figure \ref{fig:PCR_plots} compares the distribution of vital statistics for sepsis and non-sepsis days in patient history, after removing "outliers", i.e .the bottom and top two percent of each distribution. White blood cell count seems to behave similarly as in the TT study, but heart rate and platelet count seem to have the opposite association. For example, average heart seems to be lower for the sepsis group.  
+
+```{r PCR_model, cache = T, eval = F, echo = F, warning = F, message = F, results = "hide"}
+
+# Pre-process data
+
+PCR_vitals_wide$V_PH = as.numeric(PCR_vitals_wide$V_PH)
+PCR_vitals.x = na.omit(PCR_vitals_wide)
+#PCR_vitals.x$V_PH = replace(vitals_wide_onset_model$V_PH, vitals_wide_onset_model$V_PH=="NA", NA)
+PCR_vitals.y = as.factor(PCR_vitals.x$SEPSIS_STATUS)
+PCR_vitals.x = as.matrix(select(PCR_vitals.x, -starts_with("SEPSIS")))
+PCR_vitals.x = apply(PCR_vitals.x, 2, as.numeric)
+PCR_vitals.x = scale(PCR_vitals.x, center = F)
+colnames(PCR_vitals.x) = names(PCR_vitals_wide)[names(PCR_vitals_wide)!="SEPSIS_STATUS"]
+
+# Model
+PCR_glmnet = glmnet(PCR_vitals.x, y = PCR_vitals.y, family = "multinomial", type.multinomial = "grouped")
+
+# CV model
+PCR_cvfit=cv.glmnet(PCR_vitals.x, PCR_vitals.y, family="multinomial", type.multinomial = "grouped")
+
+```
+
+\pagebreak
+
+Below are fit coefficients from only the less-restrictive cross-validated multinomial model. The more restrictive model is left out since this model is already fairly small.
+
+```{r PCR_model_output, cache = T, eval = F, echo = F, warning = F, message = F, fig.keep = "none"}
+
+plot(PCR_glmnet, label = T)
+plot(PCR_cvfit)
+
+print("Coefficients -- smaller penalty")
+
+#Minimum CV penalty
+PCR_cvfit.results = round(as.matrix(do.call("cbind", coef(PCR_cvfit, s = PCR_cvfit$lambda.min))), 4)
+colnames(PCR_cvfit.results) = c("Non-Sepsis", "Sepsis")
+PCR_cvfit.results = PCR_cvfit.results[order(PCR_cvfit.results[,1]), ]
+PCR_cvfit.results[PCR_cvfit.results[,1] != 0, 2:1]
+#t(apply(PCR_cvfit.results[PCR_cvfit.results[,1] != 0, ], 1, rank))
+
+# temperature appeared insignificant, but shows up in the model
+#aggregate(PCR_vitals_wide$V_TEMPERATURE, by = list(PCR_vitals_wide$SEPSIS_STATUS), mean, na.rm = T)
+
+# This model is empty, ignore:
+
+# coef(PCR_cvfit, lambda = PCR_cvfit$lambda.1se)
+# PCR_cvfit.results = round(as.matrix(do.call(cbind, coef(PCR_cvfit, s = PCR_cvfit$lambda.1se))), 4)
+# colnames(PCR_cvfit.results) = c("Non-Sepsis", "Sepsis")
+# PCR_cvfit.results = PCR_cvfit.results[order(PCR_cvfit.results[,1]), ]
+# PCR_cvfit.results[PCR_cvfit.results[,1] != 0, ]
+# t(apply(TT_cvfit.results[TT_cvfit.results[,1] != 0, ], 1, rank))
+```
+
+Note that although temperature did not appear to be significant based on the distribution plots, it is again the most important term in the model. As above, coefficients are shown on a standardized scale.
+
+# Data oddities ####
+
+- A number of entries with infection Onset = "Yes" have infection Any = "No". How is that possible?
+
+```{r TT_Data_Questions, cache = T, echo = 1}
+sum(TT$Onset=="Yes" & TT$Any=="No", na.rm = T) 
+```
+
+```{r TT_Data_Questions_2, cache = T}
+
+TT %>% select("per_code_factor", "Total BSI", "Blood") %>% arrange(per_code_factor) %>% filter(per_code_factor == "TT-017-01087" | per_code_factor=="TT-017-01095")
+
+```
+- How should we treat the cases where infection presents in the first couple days?
+
+```{r PCR_tabs, cache = T, eval = T, echo = c(1,3), warning = F, message = F}
+# PCR STUDY
+table(PCR_labs_summary$first, useNA = "always")
+# TT STudy
+table(TT_per$first_any, useNA = "always")
+```
+
+- Whey doesn't the 
+
+
+
+<!-- Future work
+
+- Incorporate demographic information from the TT study more strategically, including discrete variables.
+
+- Build seperate models for different infection types. There is not much correlation between infection types in the TT study (see below), so we may want to consider seperate models, but this means limited data for each. Of specific infection types, blood infection listed as most important.
+    + Restrict to look at occurence of first bloodstream infection instead of any onset. (Is there enough data for this?)
+
+- Apply models which capture complex interactions between predictors. (This can be filed under Machine Learning if that's helpful in attracting funding.)-->
+

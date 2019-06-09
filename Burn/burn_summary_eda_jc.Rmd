@@ -1,0 +1,98 @@
+---
+title: Preliminary Findings from Burn Data EDA
+author: Jane Carlen
+output:
+  pdf_document: default
+  html_document: default
+---
+Below is an outline of findings from exploratory analysis of the Transfusion Trigger study data. I have done very preliminary analysis of the data from the PCR Sepsis study. If we go forward with this I'd like to finalize hypotheses from the Transfusion Trigger study and then test them on the PCR Sepsis data.
+
+General note: I refer to the Greenhalgh criteria repeatedly. By this I mean the list on p. 779 of the paper, "American Burn Association Consensus Conference to Define Sepsis and Infection in Burns", where criteria are laid out for a “trigger” of infection. My understanding is that at least three of those criteria need to be met as a precursor to “sepsis”, but that “infection” would be confirmed with cultures or other tests.
+
+I built a shiny app so that I could look at many aspects of the data in one place. The code and data needed to run that app are in the burn-app-directory folder (attached). If you have R and the necessary packages installed (shiny, dplyr, gglot2, forcats, reshape, scales) you can run it from the command line with the code R -e "shiny::runApp('path/to/burn-app-directory/app.R')" adjusting the path for your system. That will print code to the terminal like "Listening on http://127.0.0.1:7640". Navigating your browser to http://127.0.0.1:[last4digits] should pull up the app. Using the app I generated some hypotheses for predicting blood infections in burn patients, described below.
+
+
+### Hypothesis generation (shiny):
+
+* The Greenhalgh standard of > 110 bpm for tachycardia (rapid heart rate) may be improved if it were made age-specific. Older people seem more likely to have blood infections without exceeding that cutoff. 
+    * To see this in the shiny app choose Heart Rate as the variable, set minimum blood infections to 1, order plots by age and set max plots to 25.
+    * I attached a plot (V_HEART_RATE_vs_Age.png) that seems to support this hypothesis. Older people tend to have lower heart rates in general, but heart rates are elevated on or immediately before first blood infection days. Comparing linear models (dashed lines in the plots) the intercept is higher for day-of and day-before first blood infection entries than overall (134 vs 114) and the slope is more extreme (-.46 vs. -.3).
+    
+* The cumulative number of days outside an acceptable range (relative to the Greenhalgh criteria) seems to matter. Unfortunately I don’t remember the specific plot(s) that suggested this to me, but the observation led me to add cumulative abnormal days as features in the data, e.g. cumulative days with temperature < 36.5 or > 39.
+    * In some decision trees (see below) these cumulative variables were selected as splitting variables, but this is still work in progress. Also, more observation days are associated with more infections in general.
+    * Future threads: (Duncan’s question) Should cumulative abnormal days reset after an infection? 
+
+* Respiratory rate cutoff (>25 bpm) seems too low in the Greenhalgh criteria. 
+    * I attached a plot (RESP_and_TEMP.png) that suggests that >30 bpm may be more appropriate. The first row of that plot is for respiratory rate and the second is for temperature. In the upper left panel, first-infection rates start to climb when respiratory rate exceeds 30 bpm. In contrast to respiratory rate, the “normal” range for temp in burn patients (inside the dashed lines) seems like a better standard. There is some evidence there that the upper bound of 39 would be better at 38.5. 
+    * caveat: What I'm seeing with respiratory rates may be influenced by that fact that I’m not taking ventilator use into account. The Greenhalgh criteria has a different standard for individuals on ventilators, but the data seems to only report \textit{aggregate} ventilator days by individual.
+
+### Comparison of decision tree classification to existing criteria
+* I compared the true and false positive rates of the Greenhalgh criteria and SIRS criteria (also described in the Greenhalgh paper but deemed inappropriate for burn patients) to decision trees using the underlying variables in those criteria. 
+    * This is work in progress, but from what I’ve seen so far better precision and recall can be achieved with decision-tree criteria.
+    * I tried 50/50 training/testing splits on the data and still saw improvement.
+    * To obtain meaningful estimates of improvement I would need to tune the parameters (e.g. case weights, minimum bucket sizes) and cross-validate more carefully.
+    * A major caveat to this is that I wasn’t able to translate all of the Greenhalgh criteria to the data. For example, I don't think I can track "insulin resistance" or "inability to continue enteral feedings" based on the data I have.
+        * Future threads:
+            * (Duncan’s question) Were the Greenhalgh or SIRS criteria satisfied at \textit{any} point before blood stream infection? They’re useful if true in a window before infection.
+            * How complicated/how many group-specific criteria could we expect doctors and nurses to use in practice?
+* In the shiny app, there is a checkbox selection for showing days when patients met the Greenhalgh or SIRS criteria according to my approximate application of them with limited data. Experimenting with those reinforced for me that the SIRS criteria has far too many false positives, and the Greenhalgh criteria is not very strongly correlated with pre-infection.  
+
+### Questions
+* I’m not accounting for how treatments/interventions affect observed vitals. This may be OK when looking only at days before the first blood infection, but presumably any infection results in treatment that affects vitals. If an individual has a non-bloodstream infection first could it also lead to treatment? How should I account for those issues?
+* Next steps?
+
+### Notes from talk with Sandy 6/7/2019:
+
+Summary of goals (in order to be completed):
+  1. Compare best models derived from Greenhalgh and Sirs variables (separately) to current Greenhalgh and SIRS criteria. The models may be simple cutoffs, logistic regression, and/or decision trees. 
+  2. Same as above but combining Greenhalgh and SIRS variables.
+  3. Consider demographic variables, e.g. age, gender and interactions, but still limited to single time point data.
+  4. (If time) Consider derived variables like cumulative days above a threshold. This can't be implemented currently, but could help argue for expanded capabilities with medical records. 
+
+Q: Is cumulative days a derived variable that would be too complicated? Age specific variables?
+A: Currently Davis can handle SINGLE TIME POINT INFORMATION. Anything beyond that would have to go back to the software developed/maintainer. 
+  - Consider derived variables as an add-on once we do the other things
+  - Variables like age could be considered since they’d be part of point-in-time data, but consider only the SIRS and Greenhalgh variables first.
+  
+Q: Only use days before first blood infection? What if there's another type of infection before blood infection?
+A: Use days until first day of BLOODSTREAM ONLY.  (note: There's supposed to be a washout period where they don't count a new infection until 14 days have passed)
+
+Q: Did I map the Greenhalgh and SIRS variables correctly?
+A: It seems so. (Note, here's what I did:
+
+Greenhalgh_vars = c("V_TEMPERATURE", "V_HEART_RATE", "V_RESPIRATORY_RATE",  "V_PLATELET_COUNT", "V_GLUCOSE")
+
+This is derived from variables in the TT data that I could map to the list on p. 779 of the Greenhalgh paper (American burn association consensus conference to define sepsis and infection in burns. I removed the info about children): 
+
+"The trigger includes at least three of the following:
+I. Temperature >39° or <36.5°C
+II. Progressive tachycardia 
+  A. Adults > 110 bpm 
+III. Progressive tachypnea 
+  A. Adults >25 bpm not ventilated i. Minute ventilation > 12l/min ventilated
+  **Follow-up question: I didn't find in the data a daily variable for whether someone was on a ventilator (only aggregated). How should I account for that if I’m using respiratory rate as a variable?**
+IV. Thrombocytopenia (will not apply until 3 days after initial resuscitation) 
+  A. Adults < 100,000/mcl
+V. Hyperglycemia (in the absenceofpre-existing diabetes mellitus) 
+  A. Untreated plasma glucose > 200 mg/dl or equivalent mM/L
+  B. Insulin resistance—examples include 
+    i. > 7 units of insulin/hr intravenous drip (adults)
+    ii. Significant resistance to insulin (>25% increase in insulin requirements over 24 hours)
+VI. Inability to continue enteral feedings >24 hours 
+  A. Abdominal distension 
+  B. Enteral feeding intolerance (residual >150 ml/hr in children or two times feeding rate in adults)
+C. Uncontrollable diarrhea (>2500 ml/d for adults)” 
+
+
+SIRS_vars = c("V_TEMPERATURE", "V_HEART_RATE", "V_RESPIRATORY_RATE",  "V_WHITE_BC", "V_PACO2")
+
+This is derived from the list on p. 777 of the Greenhalgh paper:
+
+ "The current definition of SIRS was created by a consensus conference of critical-care and trauma physicians more than a decade ago. SIRS is considered to be present when a patient demonstrates two or more of the following: 
+  1. Temperature above 38°C or below 36°C. 
+  2. Heart rate > 90 beats per minute (bpm). 
+  3. Respiratory rate > 20/min or maintenance of PaCO2 <32 mm Hg.
+  4. WBC count >12,000/mm3 or <4,000/mm3, or left shift defined as >10% bands." **what is > 10% bands?**
+
+Q:  Should I consider a merge of both lists?
+A: Yes, since they're all easily measured vitals, but do the lists independently first.

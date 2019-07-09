@@ -7,9 +7,18 @@
 # 3. Consider demographic variables, e.g. age, gender and interactions, but still limited to single time point data.
 # 4. (If time) Consider derived variables like cumulative days above a threshold. This cant be implemented currently, but could help argue for expanded capabilities with medical records. 
 
+# Notes
+
+# 1. Respiratory rate: We know that distributions of respiratory rate are different for those on vs. not on ventilagor (see TT.vent.plot), but we don't have a variable for ventilation in terms of l/min, which is what the Greenhalgh criteria uses for ventilated patients (Minute ventilation > 12 l/min ventilated). Thus, we can only lag UNventilated patients based on this rate, which could create bias.
+# Minimize cross-validation error
+# **** What false positive rates are acceptable? ****
+# Show motivation for factor in write-up
+# Response as within next 3 days to increase response numbers?
+# Other entries to filter out of the data before modelling, e.g. high mod score?
 # ------------------------------------------------------------------------------------------------------------------------------
 # 0. Setup ####
-
+# ------------------------------------------------------------------------------------------------------------------------------
+#   - packages and wd ----
 library(dplyr)
 library(plotly)
 library(crosstalk)
@@ -21,14 +30,15 @@ library(ROCR)
 library(cowplot)
 library(stringr)
 library(tidyr)
+library(readxl)
 
 ndigits = 2
 cumsum2 <- function(v) {cumsum(replace_na(v, 0))}
-
+setwd("~/Documents/DSI/Burn/")
 
 #   - load DATA ####
 
-TT <- read.csv("TT_jane.csv", stringsAsFactors = F, check.names = F)[,-1]
+TT <- read.csv("TT_jane.csv", stringsAsFactors = F, check.names = F)
 TT$per_code_factor = as.factor(TT$PER_CODE)
 TT$per_code_factor = reorder(TT$per_code_factor, TT$total_days_since_first_collection) #for plot order later
 TT = TT %>% mutate(Blood_test_performed = as.factor(case_when(
@@ -37,68 +47,82 @@ TT = TT %>% mutate(Blood_test_performed = as.factor(case_when(
   !is.na(V_TIME_PERFORMED_1) &  is.na(V_TIME_PERFORMED_2) ~ "Blood Chemistry"))) #both NA auto goes to NA
 #vital_vars = names(TT)[grepl(x = names(TT), "V_.*")]
 vital_vars = c("V_DATE_COLLECTION", "V_TIME_PERFORMED_1", "V_TIME_PERFORMED_2", "V_TIME_PERFORMED_3",
-                          "V_HEART_RATE", "V_PB_SYSTOLIC", "V_BP_DIASTOLIC", "V_MEANARTERIAL_PRESSURE", "V_CENTRAL_VENOUS_PRESSURE",
-                          "V_TEMPERATURE", "V_PAO2", "V_FIO2", "V_PACO2", "V_HCO3",
-                          "V_RESPIRATORY_RATE", "V_SODIUM", "V_POTASSIUM", "V_BLOOD_UREA_NITROGEN", "V_CREATININE",
-                          "V_PLATELET_COUNT", "V_WHITE_BC", "V_HEMOGLOBIN", "V_HEMATOCRIT",  "V_GLASCOWCOMA_SCALE", 
-                          "V_GLUCOSE", "V_MODS_SCORE", "V_PH","V_BILIRUBIN") #for individual plot ordering later
-                          
-TT_Demo1 = read.csv("TT_Demo1.csv")[,-1]
+               "V_HEART_RATE", "V_PB_SYSTOLIC", "V_BP_DIASTOLIC", "V_MEANARTERIAL_PRESSURE", "V_CENTRAL_VENOUS_PRESSURE",
+               "V_TEMPERATURE", "V_PAO2", "V_FIO2", "V_PACO2", "V_HCO3",
+               "V_RESPIRATORY_RATE", "V_SODIUM", "V_POTASSIUM", "V_BLOOD_UREA_NITROGEN", "V_CREATININE",
+               "V_PLATELET_COUNT", "V_WHITE_BC", "V_HEMOGLOBIN", "V_HEMATOCRIT",  "V_GLASCOWCOMA_SCALE", 
+               "V_GLUCOSE", "V_MODS_SCORE", "V_PH","V_BILIRUBIN") #for individual plot ordering later
+
+TT_Demo1 = read.csv("TT_Demo1.csv")
+TT_per = read.csv("TT_per_jane.csv", stringsAsFactors = F)
 
 
 #add in V_VENT variable
-TT_ABA_2 = spreadsheets[["ABA_TT_Daily_Collection_Part_2.xlsx"]][[1]] #I got this later spreadsheet, see email from Sandy 6-7-19
+
+TT_ABA_2 = read_xlsx("Data/ABA_TT_Daily_Collection_Part_2.xlsx") #I got this later spreadsheet, see email from Sandy 6-7-19
 TT = left_join(TT, TT_ABA_2 %>% select(PER_CODE, V_DATE_COLLECTION, V_VENT) %>% 
                  mutate(V_DATE_COLLECTION = as.character(V_DATE_COLLECTION))) %>%
-                 mutate(V_VENT = ifelse(V_VENT == "No", FALSE, TRUE))
+  mutate(V_VENT = ifelse(V_VENT == "No", FALSE, TRUE))
 # Node respiratory rates higher on average for ventilated people
-TT %>% select(V_RESPIRATORY_RATE,V_VENT) %>% ggplot() + geom_histogram(aes(x = V_RESPIRATORY_RATE, group = V_VENT, fill = V_VENT), position = "dodge")
+TT.vent.plot = TT %>% dplyr::select(V_RESPIRATORY_RATE,V_VENT) %>% ggplot() + geom_histogram(aes(x = V_RESPIRATORY_RATE, group = V_VENT, fill = V_VENT), position = "dodge")
 
-# ------------------------------------------------------------------------------------------------------------------------------
-# 1. Compare best models derived from Greenhalgh and Sirs variables ####
+# Create new version of data frame for fitting trees
+TT.tree.data = TT
+
 #   - Add the criteria (best I can) to the TT data ####
 
 #   - Add Greenhlagh features (see Greenhalgh et all p. 779 for the ranges used) ----
-Greenhalgh_vars = c("V_TEMPERATURE", "V_HEART_RATE", "V_RESPIRATORY_RATE",  "V_PLATELET_COUNT", "V_GLUCOSE")
+Greenhalgh_vars = c("V_TEMPERATURE", "V_HEART_RATE", "V_RESPIRATORY_RATE",  "V_PLATELET_COUNT", "V_GLUCOSE", "V_VENT")
 
-TT = TT %>% 
-       mutate(
-        gh_abnorm_temp = (V_TEMPERATURE > 39 | V_TEMPERATURE < 36.5),
-        gh_abnorm_heart_rate = V_HEART_RATE > 110,
-        gh_abnorm_resp_rate = V_RESPIRATORY_RATE > 25,
-        gh_abnorm_plat_count = V_PLATELET_COUNT < 100,
-        gh_abnorm_glucose = V_GLUCOSE > 200,
-        Greenhalgh = rowSums(cbind(gh_abnorm_temp, gh_abnorm_heart_rate, gh_abnorm_resp_rate,
-                                   gh_abnorm_plat_count, gh_abnorm_glucose), na.rm = T) >= 3
-       )
+TT.tree.data = TT.tree.data %>% 
+  mutate(
+    gh_abnorm_temp = (V_TEMPERATURE > 39 | V_TEMPERATURE < 36.5),
+    gh_abnorm_heart_rate = V_HEART_RATE > 110,
+    gh_abnorm_resp_rate = V_RESPIRATORY_RATE > 25 & !V_VENT,
+    gh_abnorm_plat_count = V_PLATELET_COUNT < 100,
+    gh_abnorm_glucose = V_GLUCOSE > 200,
+    Greenhalgh = rowSums(cbind(gh_abnorm_temp, gh_abnorm_heart_rate, gh_abnorm_resp_rate,
+                               gh_abnorm_plat_count, gh_abnorm_glucose), na.rm = T) >= 3
+  )
 
+TT.tree.data %>% select(contains("gh_")) %>% cor(use = "pairwise") %>% round(2)
 
 #   - Add SIRS features (see Greenhalgh et all p. 777 for the ranges used) ----
 # Consider bad SIRS criteria - "The definition is so inclusive as to be meaningless."
 
 SIRS_vars = c("V_TEMPERATURE", "V_HEART_RATE", "V_RESPIRATORY_RATE",  "V_WHITE_BC", "V_PACO2")
 
-TT = TT %>% 
-      mutate(
-        sirs_abnorm_tmp = (V_TEMPERATURE > 38 | V_TEMPERATURE < 36),
-        sirs_abnorm_heart_rate =  V_HEART_RATE > 90,
-        # supposed to be maintenance of PaCO2 > 32 - what counts as maintenance?:
-        sirs_abnorm_resp_rate =  (!is.na(V_RESPIRATORY_RATE) & V_RESPIRATORY_RATE > 20) | (!is.na(V_PACO2) & V_PACO2 < 32),
-        #note this also says "or left shift defined as > 10% of bands, what does that mean?:
-        sirs_abnorm_wbc = (V_WHITE_BC < 4 | V_WHITE_BC > 12),
-        SIRS = rowSums(cbind(sirs_abnorm_tmp, sirs_abnorm_heart_rate, sirs_abnorm_resp_rate,
-                             sirs_abnorm_wbc), na.rm = T) >= 2
-      )
+
+TT.tree.data = TT.tree.data %>% 
+  mutate(
+    sirs_abnorm_tmp = (V_TEMPERATURE > 38 | V_TEMPERATURE < 36),
+    sirs_abnorm_heart_rate =  V_HEART_RATE > 90,
+    # supposed to be maintenance of PaCO2 > 32 - what counts as maintenance?:
+    sirs_abnorm_resp_rate =  (!is.na(V_RESPIRATORY_RATE) & V_RESPIRATORY_RATE > 20) | (!is.na(V_PACO2) & V_PACO2 < 32),
+    #note this also says "or left shift defined as > 10% of bands, what does that mean?:
+    sirs_abnorm_wbc = (V_WHITE_BC < 4 | V_WHITE_BC > 12),
+    SIRS = rowSums(cbind(sirs_abnorm_tmp, sirs_abnorm_heart_rate, sirs_abnorm_resp_rate,
+                         sirs_abnorm_wbc), na.rm = T) >= 2
+  )
+
+TT.tree.data %>% select(contains("sirs_")) %>% cor(use = "pairwise") %>% round(2)
 
 # How much missing data?
-round(sapply( TT %>% select(contains("abnorm")), function(x) { sum(is.na(x)) / nrow(TT) } ), 3)
+round(sapply( TT.tree.data %>% select(contains("abnorm")), function(x) { sum(is.na(x)) / nrow(TT.tree.data) } ), 3)
 
-# Table Compare SIRS and Greenhalgh ----
-TT.tree.data %>% select(contains("abnorm_")) %>% select(-contains("cum")) %>% colMeans(na.rm = T) %>% round(2)
-table(TT.tree.data$SIRS)
+#  Compare SIRS and Greenhalgh by Confusion Matrix -- Neither is good. LOTS of false positives ----
+
+#How much missing data?
+TT.tree.data %>% select(contains("abnorm_")) %>% colMeans(na.rm = T) %>% round(2)
+#How many caes?
+table(TT_per$n_blood) #70 patients out of 246 had any blood infection
+#How many days satisfying criteria?
+table(TT.tree.data$SIRS) 
 table(TT.tree.data$Greenhalgh)
 
-# First infection day
+# Confusion matrix for different criteria 
+
+# First blood infection day
 TT.tree.data %>% filter(before_blood == TRUE | (first_blood_l == TRUE | n_blood == 0))  %>% 
   select(Greenhalgh, first_blood_l) %>% table() %>% prop.table(1) %>% round(3)
 
@@ -113,160 +137,241 @@ TT.tree.data %>% filter(before_blood == TRUE | (blood_onset_tomorrow == TRUE | n
   select(SIRS, blood_onset_tomorrow) %>% table() %>% prop.table(1) %>% round(3)
 
 #Check abnorm temperature specifically
-round(prop.table(table(TT.tree.data$abnorm_temp, TT.tree.data$first_blood_l), 1), 3)
-round(prop.table(table(TT.tree.data$abnorm_temp, TT.tree.data$blood_onset_tomorrow), 1), 3)
+round(prop.table(table(TT.tree.data$sirs_abnorm_tmp, TT.tree.data$first_blood_l), 1), 3)
+round(prop.table(table(TT.tree.data$gh_abnorm_temp, TT.tree.data$blood_onset_tomorrow), 1), 3)
 
 # Any infection day
 round(prop.table(table(TT.tree.data$Greenhalgh, TT.tree.data$Blood), 1), 2)
-
 round(prop.table(table(TT.tree.data$SIRS, TT.tree.data$Blood), 1), 2)
 
-####################################################################################################################
-# Decision trees, ROC curves ###################################################################################
-####################################################################################################################
-# Setup ####
 
-TT.tree.data = TT %>% group_by(per_code_factor) %>% arrange(V_DATE_COLLECTION) %>%
-    mutate(
-         cum_gh_abnorm_temp = cumsum2(abnorm_temp),
-         cum_gh_abnorm_heart_rate = cumsum(abnorm_heart_rate),
-         cum_gh_abnorm_resp_rate = cumsum2(abnorm_resp_rate),
-         cum_gh_abnorm_plat_count = cumsum2(abnorm_plat_count),
-         cum_gh_abnorm_glucose = cumsum2(abnorm_glucose),
-         cum_abnorm_Greenhalgh = cumsum2(Greenhalgh)
-         ) %>%
-  ungroup()
+#    - tree helper function ----
 
-TT.tree.data = TT %>% group_by(per_code_factor) %>% arrange(V_DATE_COLLECTION) %>%
-  mutate(
-    cum_sirs_abnorm_temp = cumsum2(sirs_abnorm_tmp),
-    cum_sirs_abnorm_heart_rate = cumsum(sirs_abnorm_heart_rate),
-    cum_sirs_abnorm_resp_rate = cumsum2(sirs_abnorm_resp_rate),
-    cum_sirs_abnorm_plat_count = cumsum2(sirs_abnorm_wbc),
-    cum_abnorm_SIRS = cumsum2(SIRS)
-  ) %>%
-  ungroup()
-
-# Decision tree with Greenhalgh variables. Sometimes cutoffs are pretty similar, especially 39 as a temp cutoff ----
-
-TT.tree.data %>% filter(before_blood == TRUE | (first_blood_l == TRUE | n_blood == 0)) %>%
-        select(Greenhalgh_vars, "V_WHITE_BC", #<- bc not in but in SIRS so I kept it
-               "Greenhalgh", "first_blood_l") %>%
-        rpart(formula = first_blood_l ~ ., data = ., control = rpart.control(minbucket = 100), 
-              weights = 20*(first_blood_l)+1) %>% 
-        rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
-
-TT.tree.data %>% filter(before_blood == TRUE | (blood_onset_tomorrow == TRUE | n_blood == 0)) %>%
-        select(Greenhalgh_vars, "V_WHITE_BC", #<- bc not in but in SIRS so I kept it
-                "Greenhalgh", "blood_onset_tomorrow") %>%
-        rpart(formula = blood_onset_tomorrow ~ ., data = ., control = rpart.control(minbucket = 100), 
-              weights = 20*(blood_onset_tomorrow)+1) %>% 
-        rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
-
-#   + With training and testing set ----
-TT.split = sample(1:nrow(TT.tree.data), size = nrow(TT.tree.data)/2)
-TT.train = TT.tree.data[TT.split,]
-TT.test = TT.tree.data[-TT.split,]
-
-TT.tree.train = TT.train %>% filter(before_blood == TRUE | (first_blood_l == TRUE | n_blood == 0)) %>%
-        select(Greenhalgh_vars, "V_WHITE_BC","Greenhalgh", "first_blood_l") %>%
-        rpart(formula = first_blood_l ~ ., data = ., control = rpart.control(minbucket = 100), weights = 10*(first_blood_l)+1) 
-rpart.plot(TT.tree.train, roundint = F, extra = 1)
-
-pred <- prediction(predict(TT.tree.train, TT.train), labels = TT.train$first_blood_l)
-plot(performance(pred, "tpr", "fpr"))
-pred <- prediction(predict(TT.tree.train, TT.test), labels = TT.test$first_blood_l)
-plot(performance(pred, "tpr", "fpr"), add = T, col = "red", lty = 2)
-
-# Decision tree with SIRS variables. ----
-
-#Only days of and before first blood infection
-TT.tree.data %>% filter(before_blood == TRUE | (first_blood_l == TRUE | n_blood == 0)) %>%
-        select(SIRS_vars, "SIRS", "first_blood_l") %>%
-        rpart(formula = first_blood_l ~ ., data = ., control = rpart.control(minbucket = 100), 
-              weights = 20*(first_blood_l)+1) %>% 
-        rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
-
-#Only days before first blood infection - response is day before infection
-TT.tree.data %>% filter(before_blood == TRUE | (blood_onset_tomorrow == TRUE | n_blood == 0)) %>%
-        select(SIRS_vars, "SIRS", "blood_onset_tomorrow") %>%
-        rpart(formula = blood_onset_tomorrow ~ ., data = ., control = rpart.control(minbucket = 100), 
-              weights = 20*(blood_onset_tomorrow)+1) %>% 
-        rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
-
-
-#All days compared to blood infection days
-TT.tree.data %>%
-        select("V_TEMPERATURE", "V_HEART_RATE", "V_RESPIRATORY_RATE", "V_RESPIRATORY_RATE", "V_WHITE_BC", "SIRS", "Blood") %>%
-        rpart(formula = Blood ~ ., data = ., control = rpart.control(minbucket = 10), 
-              weights = 1*(Blood)+1) %>%
-        rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)  
-
-
+#input data set as dataframe
+tree_etc <- function(dataset, x_vars, y_var, day_cutoff = NULL, minbucket = 10, cp = .005, xval = 200, weights = 99) {
  
-# Decision tree with all variables (test error worse) ----
-#   Day of first blood infection vs. not, filtering out days after ----
+  if (is.null(day_cutoff)) {
+    dataset$response = dataset[[y_var]]
+  } else {
+    dataset$response = dataset[[y_var]] < day_cutoff
+  }
 
-#   + Whole population ----
+  tree = dataset %>% 
+          dplyr::filter(before_blood == TRUE | (response == TRUE | n_blood == 0)) %>%
+          select(c(x_vars, "response")) %>%
+          rpart(formula = response ~ . ,
+                control = rpart.control(minbucket = minbucket, cp = cp, xval = xval), 
+                weights = weights*(response)+1,
+                model = TRUE, y = TRUE) 
+  
+  cptable = tree$cptable
+  plotcp(tree)
+  
+  cp_min = cptable[which.min(cptable[,which(colnames(cptable)=="xerror")]),"CP"]
+  
+  pruned = prune(tree, cp = cp_min)
+  
+  plotcp(pruned)
+  
+  #     + Roc curve ----
+  pred <- prediction(predict(pruned, pruned$model), labels = pruned$y)
+  plot(performance(pred, "tpr", "fpr"))
+  abline(a = 0, b = 1, lty = 3)
+  pruned_auc = performance(pred, "auc")@y.values[[1]] #auc
+  cat("pruned_auc", pruned_auc)
+  
+  return(
+    list(tree = tree,
+         pruned_tree = pruned,
+         pruned_tree_auc = pruned_auc
+    )
+  )
+  
+}
 
-TT.tree.data %>% filter(before_blood == TRUE | (first_blood_l == TRUE | n_blood == 0)) %>%
-        select(vital_vars[-c(1:4)], "first_blood_l", "Gender", "Age", "TBSA", contains("cum"), "days_since_first_collection") %>%
-        rpart(formula = first_blood_l ~ ., data = ., control = rpart.control(minbucket = 20), 
-              weights = 5*(first_blood_l)+1, parms = "information") %>%
-        rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
+# ------------------------------------------------------------------------------------------------------------------------------
+# 1. Decision trees from Greenhalgh and Sirs variables SEPERATE ####
+# ------------------------------------------------------------------------------------------------------------------------------
+#  - Greenhalgh ----
+#   Sometimes cutoffs are pretty similar, especially 39 as a temp cutoff 
 
 
-TT.tree = TT.tree.data %>% filter(before_blood == TRUE | (first_blood_l == TRUE | n_blood == 0)) %>%
-        select(vital_vars[-c(1:4)], "first_blood_l", "Gender", "Age", "TBSA", contains("cum"), "days_since_first_collection") %>%
-        rpart(formula = first_blood_l ~ ., data = ., control = rpart.control(minbucket = 20), 
-              weights = 5*(first_blood_l)+1, parms = "information")
+# Fit tree and pruned tree
+par(mfrow = c(2,3))
+gh_tree_first_blood = tree_etc(TT.tree.data, x_vars = c(Greenhalgh_vars, "Greenhalgh"), y_var = "first_blood_l",
+                               xval = 100, cp = .007, weights = 99)
+gh_tree_day_before= tree_etc(TT.tree.data, x_vars = c(Greenhalgh_vars, "Greenhalgh"), y_var = "blood_onset_tomorrow",
+                             xval = 100, cp = .007)
 
-rpart.plot(TT.tree, roundint = F)
+# Show tree plts
+par(mfrow = c(1, 2))
+gh_tree_first_blood$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
+gh_tree_day_before$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
 
-#       Roc curve ----
-pred <- prediction(predict(TT.tree), labels = TT.tree$y)
-plot(performance(pred, "tpr", "fpr"))
-abline()
+#  - SIRS ----
 
-#   + With training and testing set ----
-# Note range of outcomes due to random split
+# Fit tree and pruned tree
+par(mfrow = c(2,3))
+sirs_tree_first_blood = tree_etc(TT.tree.data, x_vars = c(SIRS_vars, "SIRS"), y_var = "first_blood_l",
+                                 xval = 500, cp = .007, weights = 99)
+sirs_tree_day_before= tree_etc(TT.tree.data, x_vars = c(SIRS_vars, "SIRS"), y_var = "blood_onset_tomorrow",
+                               xval = 100, cp = .007, weights = 99)
+
+# Show tree plts
+par(mfrow = c(1, 2))
+sirs_tree_first_blood$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
+sirs_tree_day_before$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
+
+
+#    +  With training and testing set 
+#         +  day of ----
 TT.split = sample(1:nrow(TT.tree.data), size = nrow(TT.tree.data)/2)
 TT.train = TT.tree.data[TT.split,]
 TT.test = TT.tree.data[-TT.split,]
 
-TT.tree.train = TT.train %>% filter(before_blood == TRUE | (first_blood_l == TRUE | n_blood == 0)) %>%
-        select(vital_vars[-c(1:4)], "first_blood_l", "Gender", "Age", "TBSA", contains("cum"), "days_since_first_collection") %>%
-        rpart(formula = first_blood_l ~ ., data = ., control = rpart.control(minbucket = 200), 
-              weights = 10*(first_blood_l)+1, parms = "information")
+sirs_tree_first_blood_train = TT.train %>% filter(before_blood == TRUE | (first_blood_l == TRUE | n_blood == 0)) %>%
+  select(SIRS_vars, "SIRS", "first_blood_l") %>%
+  rpart(formula = first_blood_l ~ ., data = ., control = rpart.control(minbucket = 10, cp = .005, xval = 100), 
+        weights = 1*(first_blood_l)+1, model = TRUE, y = TRUE) 
 
-rpart.plot(TT.tree.train)
+rpart.plot(sirs_tree_first_blood_train, roundint = F, extra = 1)
+plotcp(sirs_tree_first_blood_train)
 
-pred <- prediction(predict(TT.tree.train, TT.train), labels = TT.train$first_blood_l)
+pred <- prediction(predict(sirs_tree_first_blood_train, sirs_tree_first_blood_train$model), labels = sirs_tree_first_blood_train$y)
 plot(performance(pred, "tpr", "fpr"))
-pred <- prediction(predict(TT.tree.train, TT.test), labels = TT.test$first_blood_l)
+table(pred@predictions[[1]] > .005, sirs_tree_first_blood_train$y)
+
+pred <- prediction(predict(sirs_tree_first_blood_train, TT.test), labels = TT.test$first_blood_l)
 plot(performance(pred, "tpr", "fpr"), add = T, col = "red", lty = 2)
+abline(a = 0, b = 1, lty = 3)
+table(pred@predictions[[1]] > .005, TT.test$first_blood_l)
+
+#         +  day before ----
+
+TT.split = sample(1:nrow(TT.tree.data), size = nrow(TT.tree.data)/2)
+TT.train = TT.tree.data[TT.split,]
+TT.test = TT.tree.data[-TT.split,]
+
+sirs_tree_db_blood_train = TT.train %>% filter(before_blood == TRUE | (blood_onset_tomorrow == TRUE | n_blood == 0)) %>%
+  select(SIRS_vars, "SIRS", "blood_onset_tomorrow") %>%
+  rpart(formula = blood_onset_tomorrow ~ ., data = ., control = rpart.control(minbucket = 10, cp = .005, xval = 100), 
+        weights = 1*(blood_onset_tomorrow)+1, model = TRUE, y = TRUE) 
+
+rpart.plot(sirs_tree_db_blood_train, roundint = F, extra = 1)
+plotcp(sirs_tree_db_blood_train)
+
+pred <- prediction(predict(sirs_tree_db_blood_train, sirs_tree_db_blood_train$model), labels = sirs_tree_db_blood_train$y)
+plot(performance(pred, "tpr", "fpr"))
+table(pred@predictions[[1]] > .03, sirs_tree_db_blood_train$y)
+
+pred <- prediction(predict(sirs_tree_db_blood_train, TT.test), labels = TT.test$blood_onset_tomorrow)
+plot(performance(pred, "tpr", "fpr"), add = T, col = "red", lty = 2)
+abline(a = 0, b = 1, lty = 3)
+table(pred@predictions[[1]] > .02, TT.test$blood_onset_tomorrow)
+
+
+# ------------------------------------------------------------------------------------------------------------------------------
+# 2. Decision trees from Greenhalgh and Sirs variables COMBINED 
+# ------------------------------------------------------------------------------------------------------------------------------
+
+par(mfrow = c(2,3))
+ghsirs_tree_first_blood = tree_etc(TT.tree.data, x_vars = c(Greenhalgh_vars, "Greenhalgh", SIRS_vars, "SIRS"),
+                                   y_var = "first_blood_l", xval = 500, cp = .01, weights = 99)
+ghsirs_tree_day_before= tree_etc(TT.tree.data, x_vars = c(Greenhalgh_vars, "Greenhalgh", SIRS_vars, "SIRS"),
+                                 y_var = "blood_onset_tomorrow", xval = 500, cp = .01, weights = 99)
+
+
+# Show tree plts
+par(mfrow = c(1, 2))
+ghsirs_tree_first_blood$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
+ghsirs_tree_day_before$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
+
+# ------------------------------------------------------------------------------------------------------------------------------
+# 3. Add in demographic vars (age, gender, etc.) ----
+# ------------------------------------------------------------------------------------------------------------------------------
+#   - First blood infection day ----
+
+par(mfrow = c(2,3))
+
+ghsplus_tree_first_blood = tree_etc(TT.tree.data,
+         x_vars = c(Greenhalgh_vars, SIRS_vars, "SIRS", "Greenhalgh", "Age", "Gender", 
+                    "TBSA", "Inhalation Injury", "days_since_first_collection"),
+         y_var = "first_blood_l", xval = 100, cp = .01, weights = 99)
+
+ghsplus_tree_day_before= tree_etc(TT.tree.data,
+         x_vars = c(Greenhalgh_vars, SIRS_vars, "SIRS", "Greenhalgh", "Age", "Gender",
+                    "TBSA", "Inhalation Injury", "days_since_first_collection"),
+          y_var = "blood_onset_tomorrow", xval = 100, cp = .01, weights = 99)
+
+# Show tree plts
+par(mfrow = c(1, 2))
+ghsplus_tree_first_blood$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
+ghsplus_tree_day_before$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
+
+#     + With training and testing set ----
+TT.split = sample(1:nrow(all_tree_first_blood$model), size = nrow(all_tree_first_blood$model)/2)
+TT.train = all_tree_first_blood$model[TT.split,] %>% select(-"(weights)")
+TT.test = all_tree_first_blood$model[-TT.split,] %>% select(-"(weights)")
+
+all_tree_first_blood_train = TT.train %>%
+  rpart(formula = first_blood_l ~ ., data = ., control = rpart.control(minbucket = 100, cp = .01, xval = 200), 
+        weights = 19*(first_blood_l)+1, 
+        model = TRUE, y = TRUE) 
+
+all_tree_first_blood_train$cptable
+plotcp(all_tree_first_blood)
+pruned = prune(all_tree_first_blood_train, cp = .0336)
+rpart.plot(pruned, roundint = F, extra = 1)
+
+pred <- prediction(predict(pruned, pruned$model), labels = pruned$y)
+plot(performance(pred, "tpr", "fpr"))
+abline(a = 0, b = 1, lty = 3)
+table(pred@predictions[[1]] > .2, pruned$y)
+performance(pred, "auc")@y.values[[1]] #auc
+
+pred <- prediction(predict(pruned, TT.test), labels = TT.test$first_blood_l)
+plot(performance(pred, "tpr", "fpr"), add = T, col = "red", lty = 2)
+table(pred@predictions[[1]] > .2, TT.test$first_blood_l)
+performance(pred, "auc")@y.values[[1]] #auc
+
+
+# ------------------------------------------------------------------------------------------------------------------------------
+# 4. All vars  ----
+
+par(mfrow = c(2,3))
+
+ghsplus_tree_first_blood = tree_etc(TT.tree.data,
+                                    x_vars = c(vital_vars[-c(1:4)], "SIRS", "Greenhalgh", "Age", "Gender", 
+                                               "TBSA", "Inhalation Injury", "days_since_first_collection"),
+                                    y_var = "first_blood_l", xval = 100, cp = .01, weights = 99)
+
+
+ghsplus_tree_day_before= tree_etc(TT.tree.data,
+                                  x_vars = c(vital_vars[-c(1:4)], Greenhalgh_vars, SIRS_vars, "SIRS", "Greenhalgh", "Age", "Gender",
+                                             "TBSA", "Inhalation Injury", "days_since_first_collection"),
+                                  y_var = "blood_onset_tomorrow", xval = 100, cp = .01, weights = 99)
+
 
 #   + Sub-populations ----
+TT.tree.data %>% filter(before_blood == TRUE | (first_blood_l == TRUE | n_blood == 0)) %>%
+  select(vital_vars[-c(1:4)], "first_blood_l", "Gender", "Age", "TBSA", contains("cum")) %>%
+  filter(V_MODS_SCORE < 16) %>%
+  rpart(formula = first_blood_l ~ ., data = ., control = rpart.control(minbucket = 15),
+        weights = 5*first_blood_l+1) %>%
+  rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
 
 TT.tree.data %>% filter(before_blood == TRUE | (first_blood_l == TRUE | n_blood == 0)) %>%
-        select(vital_vars[-c(1:4)], "first_blood_l", "Gender", "Age", "TBSA", contains("cum")) %>%
-        filter(V_MODS_SCORE < 16) %>%
-        rpart(formula = first_blood_l ~ ., data = ., control = rpart.control(minbucket = 15),
-              weights = 5*first_blood_l+1) %>%
-        rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
+  select(vital_vars[-c(1:4)], "first_blood_l", "Gender", "Age", "TBSA", contains("cum")) %>%
+  filter(V_MODS_SCORE < 16, Gender == "Female") %>%
+  rpart(formula = first_blood_l ~ ., data = ., control = rpart.control(minbucket = 10),
+        weights = 2*first_blood_l+1) %>%
+  rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
 
 TT.tree.data %>% filter(before_blood == TRUE | (first_blood_l == TRUE | n_blood == 0)) %>%
-        select(vital_vars[-c(1:4)], "first_blood_l", "Gender", "Age", "TBSA", contains("cum")) %>%
-        filter(V_MODS_SCORE < 16, Gender == "Female") %>%
-        rpart(formula = first_blood_l ~ ., data = ., control = rpart.control(minbucket = 10),
-              weights = 2*first_blood_l+1) %>%
-        rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
-
-TT.tree.data %>% filter(before_blood == TRUE | (first_blood_l == TRUE | n_blood == 0)) %>%
-        select(vital_vars[-c(1:4)], "first_blood_l", "Gender", "Age", "TBSA", contains("cum")) %>%
-        filter(V_MODS_SCORE < 16, "study outcome abbr." != "Death") %>%
-        rpart(formula = first_blood_l ~ ., data = ., control = rpart.control(minbucket = 10), weights = 5*first_blood_l+1) %>%
-        rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
+  select(vital_vars[-c(1:4)], "first_blood_l", "Gender", "Age", "TBSA", contains("cum")) %>%
+  filter(V_MODS_SCORE < 16, "study outcome abbr." != "Death") %>%
+  rpart(formula = first_blood_l ~ ., data = ., control = rpart.control(minbucket = 10), weights = 5*first_blood_l+1) %>%
+  rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
 
 #       Day of blood infection vs. not (less valuable, includes days after first infection) ----
 #   + Whole population ----
@@ -291,6 +396,41 @@ TT.tree.data  %>%
   rpart.plot(., roundint = FALSE)
 
 
+# ------------------------------------------------------------------------------------------------------------------------------
+# 4. Add in derived vars (cumulative days, etc) ----
+
+# Add cumulative variables (but can't use this round)
+TT.tree.data = TT.tree.data %>% group_by(per_code_factor) %>% arrange(V_DATE_COLLECTION) %>%
+  mutate(
+    cum_gh_abnorm_temp = cumsum2(abnorm_temp),
+    cum_gh_abnorm_heart_rate = cumsum(abnorm_heart_rate),
+    cum_gh_abnorm_resp_rate = cumsum2(abnorm_resp_rate),
+    cum_gh_abnorm_plat_count = cumsum2(abnorm_plat_count),
+    cum_gh_abnorm_glucose = cumsum2(abnorm_glucose),
+    cum_abnorm_Greenhalgh = cumsum2(Greenhalgh)
+  ) %>%
+  ungroup()
+
+TT.tree.data = TT.tree.data %>% group_by(per_code_factor) %>% arrange(V_DATE_COLLECTION) %>%
+  mutate(
+    cum_sirs_abnorm_temp = cumsum2(sirs_abnorm_tmp),
+    cum_sirs_abnorm_heart_rate = cumsum(sirs_abnorm_heart_rate),
+    cum_sirs_abnorm_resp_rate = cumsum2(sirs_abnorm_resp_rate),
+    cum_sirs_abnorm_plat_count = cumsum2(sirs_abnorm_wbc),
+    cum_abnorm_SIRS = cumsum2(SIRS)
+  ) %>%
+  ungroup()
+# ------------------------------------------------------------------------------------------------------------------------------
+
+####################################################################################################################
+
+#################################################       OTHER      #################################################
+#All days compared to blood infection days ----
+TT.tree.data %>%
+  select("V_TEMPERATURE", "V_HEART_RATE", "V_RESPIRATORY_RATE", "V_RESPIRATORY_RATE", "V_WHITE_BC", "SIRS", "Blood") %>%
+  rpart(formula = Blood ~ ., data = ., control = rpart.control(minbucket = 10), 
+        weights = 1*(Blood)+1) %>%
+  rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)  
 ####################################################################################################################
 # Investigate heart rate by age ####################################################################################
 hr_age_day_of = filter(TT.tree.data, first_blood_l) %>% ggplot(aes(x = Age, y = V_HEART_RATE)) + geom_point() +

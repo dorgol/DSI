@@ -14,7 +14,9 @@
 # **** What false positive rates are acceptable? ****
 # Show motivation for factor in write-up
 # Response as within next 3 days to increase response numbers?
-# Other entries to filter out of the data before modelling, e.g. high mod score?
+# Other entries to filter out of the data before modelling, e.g. high mod score? study outcome? (death, withdrawn?)
+# LOO cross-validation?
+# 
 # ------------------------------------------------------------------------------------------------------------------------------
 # 0. Setup ####
 # ------------------------------------------------------------------------------------------------------------------------------
@@ -147,17 +149,19 @@ round(prop.table(table(TT.tree.data$SIRS, TT.tree.data$Blood), 1), 2)
 
 #    - tree helper function ----
 
-#input data set as dataframe
-tree_etc <- function(dataset, x_vars, y_var, day_cutoff = NULL, minbucket = 10, cp = .005, xval = 200, weights = 99) {
+# input data set as dataframe
+# setting day_cutoff (with y_var "days_until_first_blood") will set a "TRUE" response to be that the individual will have a blood infection within [day_cutoff] days. For example, day_cutoff 1 means that day or the next.
+tree_etc <- function(dataset, x_vars, y_var, days_before = NULL, minbucket = 10, cp = .005, xval = 200, weights = 99) {
  
-  if (is.null(day_cutoff)) {
+  if (is.null(days_before)) {
     dataset$response = dataset[[y_var]]
   } else {
-    dataset$response = dataset[[y_var]] < day_cutoff
+    dataset$response = (dataset[[y_var]] <= days_before) & (dataset[[y_var]] >= 0)
+    dataset$response[is.na(dataset$response)] = FALSE
   }
 
   tree = dataset %>% 
-          dplyr::filter(before_blood == TRUE | (response == TRUE | n_blood == 0)) %>%
+          dplyr::filter(before_blood != FALSE | (response == TRUE | n_blood == 0)) %>% 
           select(c(x_vars, "response")) %>%
           rpart(formula = response ~ . ,
                 control = rpart.control(minbucket = minbucket, cp = cp, xval = xval), 
@@ -173,8 +177,14 @@ tree_etc <- function(dataset, x_vars, y_var, day_cutoff = NULL, minbucket = 10, 
   
   plotcp(pruned)
   
-  #     + Roc curve ----
+  #     + Confusion-matrix related metrics ----
   pred <- prediction(predict(pruned, pruned$model), labels = pruned$y)
+  tp_pct <- pred@tp[[1]] / (pred@tp[[1]] + pred@fp[[1]])
+  
+  cm_quarter <- confusion_etc(pred, .25)
+  cm_quarter <- confusion_etc(pred, .5)
+  
+  #     + Roc curve ----
   plot(performance(pred, "tpr", "fpr"))
   abline(a = 0, b = 1, lty = 3)
   pruned_auc = performance(pred, "auc")@y.values[[1]] #auc
@@ -183,9 +193,21 @@ tree_etc <- function(dataset, x_vars, y_var, day_cutoff = NULL, minbucket = 10, 
   return(
     list(tree = tree,
          pruned_tree = pruned,
-         pruned_tree_auc = pruned_auc
+         pruned_pred = pred,
+         pruned_tp_pct = tp_pct,
+         pruned_cm = list(quarter_tp = cm_quarter, half_tp = cm_half),
+         pruned_auc = pruned_auc
     )
   )
+  
+}
+
+confusion_etc <- function(prediction, quantiles) {
+  lapply (quantiles, function(q) {
+    tp <- quantile(prediction@predictions[[1]][prediction@labels[[1]]], q, type = 1)
+    cm  <- table(prediction@predictions[[1]] <= tp, prediction@labels[[1]])
+    return(cm)
+  })
   
 }
 
@@ -197,30 +219,66 @@ tree_etc <- function(dataset, x_vars, y_var, day_cutoff = NULL, minbucket = 10, 
 
 
 # Fit tree and pruned tree
-par(mfrow = c(2,3))
-gh_tree_first_blood = tree_etc(TT.tree.data, x_vars = c(Greenhalgh_vars, "Greenhalgh"), y_var = "first_blood_l",
+par(mfrow = c(3,3))
+gh_tree_first_blood = tree_etc(TT.tree.data,
+                               x_vars = c(Greenhalgh_vars, "Greenhalgh"),
+                               y_var = "first_blood_l",
                                xval = 100, cp = .007, weights = 99)
-gh_tree_day_before= tree_etc(TT.tree.data, x_vars = c(Greenhalgh_vars, "Greenhalgh"), y_var = "blood_onset_tomorrow",
-                             xval = 100, cp = .007)
+
+gh_tree_day_before= tree_etc(TT.tree.data,
+                             x_vars = c(Greenhalgh_vars, "Greenhalgh"),
+                             y_var = "blood_onset_tomorrow",
+                             xval = 100, cp = .007, weights = 99)
+
+gh_tree_multi_day = tree_etc(TT.tree.data,
+                        x_vars = c(Greenhalgh_vars, "Greenhalgh"), 
+                        days_before = 2,
+                        y_var = "days_until_first_blood",
+                        xval = 100, cp = .007, weights = 49)
+
+# Confusion matrices
+gh_tree_first_blood$pruned_cm
+gh_tree_day_before$pruned_cm
+gh_tree_multi_day$pruned_cm 
 
 # Show tree plts
-par(mfrow = c(1, 2))
+par(mfrow = c(1, 3))
 gh_tree_first_blood$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
 gh_tree_day_before$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
+# interestingly close to SIRS cutoffs
+gh_tree_multi_day$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
+
 
 #  - SIRS ----
 
 # Fit tree and pruned tree
-par(mfrow = c(2,3))
-sirs_tree_first_blood = tree_etc(TT.tree.data, x_vars = c(SIRS_vars, "SIRS"), y_var = "first_blood_l",
+par(mfrow = c(3,3))
+sirs_tree_first_blood = tree_etc(TT.tree.data, 
+                                 x_vars = c(SIRS_vars, "SIRS"), 
+                                 y_var = "first_blood_l",
                                  xval = 500, cp = .007, weights = 99)
-sirs_tree_day_before= tree_etc(TT.tree.data, x_vars = c(SIRS_vars, "SIRS"), y_var = "blood_onset_tomorrow",
+
+sirs_tree_day_before= tree_etc(TT.tree.data, 
+                               x_vars = c(SIRS_vars, "SIRS"), 
+                               y_var = "blood_onset_tomorrow",
                                xval = 100, cp = .007, weights = 99)
 
+sirs_tree_multi_day = tree_etc(TT.tree.data,
+                             x_vars = c(SIRS_vars, "SIRS"), 
+                             days_before = 2,
+                             y_var = "days_until_first_blood",
+                             xval = 100, cp = .007, weights = 49)
+
 # Show tree plts
-par(mfrow = c(1, 2))
+par(mfrow = c(1, 3))
 sirs_tree_first_blood$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
 sirs_tree_day_before$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
+sirs_tree_multi_day$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
+
+# Confusion matrices
+sirs_tree_first_blood$pruned_cm
+sirs_tree_day_before$pruned_cm
+sirs_tree_multi_day$pruned_cm 
 
 
 #    +  With training and testing set 
@@ -274,85 +332,130 @@ table(pred@predictions[[1]] > .02, TT.test$blood_onset_tomorrow)
 # 2. Decision trees from Greenhalgh and Sirs variables COMBINED 
 # ------------------------------------------------------------------------------------------------------------------------------
 
-par(mfrow = c(2,3))
-ghsirs_tree_first_blood = tree_etc(TT.tree.data, x_vars = c(Greenhalgh_vars, "Greenhalgh", SIRS_vars, "SIRS"),
-                                   y_var = "first_blood_l", xval = 500, cp = .01, weights = 99)
-ghsirs_tree_day_before= tree_etc(TT.tree.data, x_vars = c(Greenhalgh_vars, "Greenhalgh", SIRS_vars, "SIRS"),
-                                 y_var = "blood_onset_tomorrow", xval = 500, cp = .01, weights = 99)
+par(mfrow = c(3,3))
+ghsirs_tree_first_blood = tree_etc(TT.tree.data, 
+                                   x_vars = c(Greenhalgh_vars, "Greenhalgh", SIRS_vars, "SIRS"),
+                                   y_var = "first_blood_l", 
+                                   xval = 200, cp = .007, weights = 99)
 
+ghsirs_tree_day_before= tree_etc(TT.tree.data, 
+                                 x_vars = c(Greenhalgh_vars, "Greenhalgh", SIRS_vars, "SIRS"),
+                                 y_var = "blood_onset_tomorrow", 
+                                 xval = 200, cp = .007, weights = 99)
+
+ghsirs_tree_multi_day = tree_etc(TT.tree.data, 
+                                 x_vars = c(Greenhalgh_vars, "Greenhalgh", SIRS_vars, "SIRS"),
+                                 y_var = "days_until_first_blood", 
+                                 days_before = 2, 
+                                 xval = 500, cp = .007, weights = 49)
 
 # Show tree plts
-par(mfrow = c(1, 2))
+par(mfrow = c(1, 3))
 ghsirs_tree_first_blood$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
 ghsirs_tree_day_before$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
+ghsirs_tree_multi_day$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
+
+# Confusion matrices
+ghsirs_tree_first_blood$pruned_cm
+ghsirs_tree_day_before$pruned_cm
+ghsirs_tree_multi_day$pruned_cm 
 
 # ------------------------------------------------------------------------------------------------------------------------------
 # 3. Add in demographic vars (age, gender, etc.) ----
 # ------------------------------------------------------------------------------------------------------------------------------
-#   - First blood infection day ----
 
-par(mfrow = c(2,3))
 
-ghsplus_tree_first_blood = tree_etc(TT.tree.data,
-         x_vars = c(Greenhalgh_vars, SIRS_vars, "SIRS", "Greenhalgh", "Age", "Gender", 
-                    "TBSA", "Inhalation Injury", "days_since_first_collection"),
-         y_var = "first_blood_l", xval = 100, cp = .01, weights = 99)
+par(mfrow = c(3,3))
+ghsirsplus_tree_first_blood = tree_etc(TT.tree.data, 
+                                   x_vars = c(Greenhalgh_vars, "Greenhalgh", SIRS_vars, "SIRS",
+                                              "Age", "Gender", "TBSA", "Inhalation Injury", "days_since_first_collection"),
+                                   y_var = "first_blood_l", 
+                                   xval = 200, cp = .007, weights = 99)
 
-ghsplus_tree_day_before= tree_etc(TT.tree.data,
-         x_vars = c(Greenhalgh_vars, SIRS_vars, "SIRS", "Greenhalgh", "Age", "Gender",
-                    "TBSA", "Inhalation Injury", "days_since_first_collection"),
-          y_var = "blood_onset_tomorrow", xval = 100, cp = .01, weights = 99)
+ghsirsplus_tree_day_before= tree_etc(TT.tree.data, 
+                                 x_vars = c(Greenhalgh_vars, "Greenhalgh", SIRS_vars, "SIRS",
+                                            "Age", "Gender", "TBSA", "Inhalation Injury", "days_since_first_collection"),
+                                 y_var = "blood_onset_tomorrow", 
+                                 xval = 200, cp = .007, weights = 49)
+
+ghsirsplus_tree_multi_day = tree_etc(TT.tree.data, 
+                                 x_vars = c(Greenhalgh_vars, "Greenhalgh", SIRS_vars, "SIRS",
+                                            "Age", "Gender", "TBSA", "Inhalation Injury", "days_since_first_collection"),
+                                 y_var = "days_until_first_blood", 
+                                 days_before = 2, 
+                                 xval = 200, cp = .007, weights = 0)
 
 # Show tree plts
-par(mfrow = c(1, 2))
-ghsplus_tree_first_blood$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
-ghsplus_tree_day_before$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
+par(mfrow = c(1, 3))
+ghsirsplus_tree_first_blood$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
+ghsirsplus_tree_day_before$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
+ghsirsplus_tree_multi_day$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
 
-#     + With training and testing set ----
-TT.split = sample(1:nrow(all_tree_first_blood$model), size = nrow(all_tree_first_blood$model)/2)
-TT.train = all_tree_first_blood$model[TT.split,] %>% select(-"(weights)")
-TT.test = all_tree_first_blood$model[-TT.split,] %>% select(-"(weights)")
-
-all_tree_first_blood_train = TT.train %>%
-  rpart(formula = first_blood_l ~ ., data = ., control = rpart.control(minbucket = 100, cp = .01, xval = 200), 
-        weights = 19*(first_blood_l)+1, 
-        model = TRUE, y = TRUE) 
-
-all_tree_first_blood_train$cptable
-plotcp(all_tree_first_blood)
-pruned = prune(all_tree_first_blood_train, cp = .0336)
-rpart.plot(pruned, roundint = F, extra = 1)
-
-pred <- prediction(predict(pruned, pruned$model), labels = pruned$y)
-plot(performance(pred, "tpr", "fpr"))
-abline(a = 0, b = 1, lty = 3)
-table(pred@predictions[[1]] > .2, pruned$y)
-performance(pred, "auc")@y.values[[1]] #auc
-
-pred <- prediction(predict(pruned, TT.test), labels = TT.test$first_blood_l)
-plot(performance(pred, "tpr", "fpr"), add = T, col = "red", lty = 2)
-table(pred@predictions[[1]] > .2, TT.test$first_blood_l)
-performance(pred, "auc")@y.values[[1]] #auc
-
+# Confusion matrices
+ghsirsplus_tree_first_blood$pruned_cm
+ghsirsplus_tree_day_before$pruned_cm
+ghsirsplus_tree_multi_day$pruned_cm 
 
 # ------------------------------------------------------------------------------------------------------------------------------
 # 4. All vars  ----
 
-par(mfrow = c(2,3))
+par(mfrow = c(3,3))
+all_tree_first_blood = tree_etc(TT.tree.data, 
+                                       x_vars = c(Greenhalgh_vars, "Greenhalgh", SIRS_vars, "SIRS",
+                                                  "Age", "Gender", "TBSA", "Inhalation Injury", "days_since_first_collection"),
+                                       y_var = "first_blood_l", 
+                                       xval = 200, cp = .007, weights = 99)
 
-ghsplus_tree_first_blood = tree_etc(TT.tree.data,
-                                    x_vars = c(vital_vars[-c(1:4)], "SIRS", "Greenhalgh", "Age", "Gender", 
-                                               "TBSA", "Inhalation Injury", "days_since_first_collection"),
-                                    y_var = "first_blood_l", xval = 100, cp = .01, weights = 99)
+all_tree_day_before= tree_etc(TT.tree.data, 
+                                     x_vars = c(Greenhalgh_vars, "Greenhalgh", SIRS_vars, "SIRS",
+                                                "Age", "Gender", "TBSA", "Inhalation Injury", "days_since_first_collection"),
+                                     y_var = "blood_onset_tomorrow", 
+                                     xval = 200, cp = .007, weights = 99)
 
+all_tree_multi_day = tree_etc(TT.tree.data, 
+                                     x_vars = c(Greenhalgh_vars, "Greenhalgh", SIRS_vars, "SIRS",
+                                                "Age", "Gender", "TBSA", "Inhalation Injury", "days_since_first_collection"),
+                                     y_var = "days_until_first_blood", 
+                                     days_before = 2, 
+                                     xval = 500, cp = .007, weights = 49)
 
-ghsplus_tree_day_before= tree_etc(TT.tree.data,
-                                  x_vars = c(vital_vars[-c(1:4)], Greenhalgh_vars, SIRS_vars, "SIRS", "Greenhalgh", "Age", "Gender",
-                                             "TBSA", "Inhalation Injury", "days_since_first_collection"),
-                                  y_var = "blood_onset_tomorrow", xval = 100, cp = .01, weights = 99)
+# Show tree plts
+par(mfrow = c(1, 3))
+all_tree_first_blood$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
+all_tree_day_before$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
+all_tree_multi_day$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
 
+# Confusion matrices
+all_tree_first_blood$pruned_cm
+all_tree_day_before$pruned_cm
+all_tree_multi_day$pruned_cm 
 
-#   + Sub-populations ----
+# ------------------------------------------------------------------------------------------------------------------------------
+# 5. Add in derived vars (cumulative days, etc) ----
+
+# Add cumulative variables (but can't use this round)
+TT.tree.data = TT.tree.data %>% group_by(per_code_factor) %>% arrange(V_DATE_COLLECTION) %>%
+  mutate(
+    cum_gh_abnorm_temp = cumsum2(abnorm_temp),
+    cum_gh_abnorm_heart_rate = cumsum(abnorm_heart_rate),
+    cum_gh_abnorm_resp_rate = cumsum2(abnorm_resp_rate),
+    cum_gh_abnorm_plat_count = cumsum2(abnorm_plat_count),
+    cum_gh_abnorm_glucose = cumsum2(abnorm_glucose),
+    cum_abnorm_Greenhalgh = cumsum2(Greenhalgh)
+  ) %>%
+  ungroup()
+
+TT.tree.data = TT.tree.data %>% group_by(per_code_factor) %>% arrange(V_DATE_COLLECTION) %>%
+  mutate(
+    cum_sirs_abnorm_temp = cumsum2(sirs_abnorm_tmp),
+    cum_sirs_abnorm_heart_rate = cumsum(sirs_abnorm_heart_rate),
+    cum_sirs_abnorm_resp_rate = cumsum2(sirs_abnorm_resp_rate),
+    cum_sirs_abnorm_plat_count = cumsum2(sirs_abnorm_wbc),
+    cum_abnorm_SIRS = cumsum2(SIRS)
+  ) %>%
+  ungroup()
+# 6. Sub-populations -------------------------------------------
+
 TT.tree.data %>% filter(before_blood == TRUE | (first_blood_l == TRUE | n_blood == 0)) %>%
   select(vital_vars[-c(1:4)], "first_blood_l", "Gender", "Age", "TBSA", contains("cum")) %>%
   filter(V_MODS_SCORE < 16) %>%
@@ -397,35 +500,12 @@ TT.tree.data  %>%
 
 
 # ------------------------------------------------------------------------------------------------------------------------------
-# 4. Add in derived vars (cumulative days, etc) ----
 
-# Add cumulative variables (but can't use this round)
-TT.tree.data = TT.tree.data %>% group_by(per_code_factor) %>% arrange(V_DATE_COLLECTION) %>%
-  mutate(
-    cum_gh_abnorm_temp = cumsum2(abnorm_temp),
-    cum_gh_abnorm_heart_rate = cumsum(abnorm_heart_rate),
-    cum_gh_abnorm_resp_rate = cumsum2(abnorm_resp_rate),
-    cum_gh_abnorm_plat_count = cumsum2(abnorm_plat_count),
-    cum_gh_abnorm_glucose = cumsum2(abnorm_glucose),
-    cum_abnorm_Greenhalgh = cumsum2(Greenhalgh)
-  ) %>%
-  ungroup()
-
-TT.tree.data = TT.tree.data %>% group_by(per_code_factor) %>% arrange(V_DATE_COLLECTION) %>%
-  mutate(
-    cum_sirs_abnorm_temp = cumsum2(sirs_abnorm_tmp),
-    cum_sirs_abnorm_heart_rate = cumsum(sirs_abnorm_heart_rate),
-    cum_sirs_abnorm_resp_rate = cumsum2(sirs_abnorm_resp_rate),
-    cum_sirs_abnorm_plat_count = cumsum2(sirs_abnorm_wbc),
-    cum_abnorm_SIRS = cumsum2(SIRS)
-  ) %>%
-  ungroup()
+# ------------------------------------------------------------------------------------------------------------------------------
+# --------------------------------------------------      OTHER      -----------------------------------------------------------
 # ------------------------------------------------------------------------------------------------------------------------------
 
-####################################################################################################################
-
-#################################################       OTHER      #################################################
-#All days compared to blood infection days ----
+# All days compared to blood infection days ----
 TT.tree.data %>%
   select("V_TEMPERATURE", "V_HEART_RATE", "V_RESPIRATORY_RATE", "V_RESPIRATORY_RATE", "V_WHITE_BC", "SIRS", "Blood") %>%
   rpart(formula = Blood ~ ., data = ., control = rpart.control(minbucket = 10), 

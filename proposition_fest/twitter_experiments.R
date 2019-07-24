@@ -36,7 +36,7 @@ search_tweets("#ucdavis", n = 500) #spawsn, https://api.twitter.com/oauth/authen
 
 search_tweets("#DataScience", n = 500, type = "popular") 
 
-# Terms from hannah ---
+# Terms to play with from hannah ---
 
 termlist = c("#roysquad", "#bethecowboy", "#Jagjaguwar",  "#mitski",
              "roysquad", '"be the cowboy"', "Jagjaguwar", "mitski")

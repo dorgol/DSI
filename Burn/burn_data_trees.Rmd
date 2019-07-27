@@ -1,0 +1,164 @@
+---
+title: "Decision Tree Models of Burn Data"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+This is proof-of-concept work to show that we can improve upon existing criteria to detect bloodstream infection in burn patients based on vital variables. 
+
+This work has four parts:
+
+1. Compare best models derived from Greenhalgh and Sirs variables (separately) to current Greenhalgh and SIRS criteria. The models may be simple cutoffs, logistic regression, and/or decision trees. 
+
+2. Same as above but combining Greenhalgh and SIRS variables.
+
+3. (If time) Consider demographic variables, e.g. age, gender and interactions, but still limited to single time point data.
+
+4. (If time) Consider derived variables like cumulative days above a threshold. This cant be implemented currently, but could help argue for expanded capabilities with medical records. 
+
+```{r setup, cache = T, results = "hide", fig.keep = "none", warning = F, message = F, echo = F}
+
+source("~/Documents/DSI/Burn/burn_data_trees.R")
+```
+
+## A. Accuracy of current criteria
+
+```{r current_ghsirs, cache = T, echo = F, warning = F, message = F}
+
+
+library(dplyr)
+# Confusion matrix for different criteria 
+
+# First blood infection day
+TT.tree.data %>% filter(before_blood == TRUE | (first_blood_l == TRUE | n_blood == 0))  %>% 
+  dplyr::filter(!is.na(V_TIME_PERFORMED_1) | !is.na(V_TIME_PERFORMED_2)) %>%
+  select(Greenhalgh, first_blood_l) %>% table()
+
+TT.tree.data %>% filter(before_blood == TRUE | (first_blood_l == TRUE | n_blood == 0))  %>% 
+  dplyr::filter(!is.na(V_TIME_PERFORMED_1) | !is.na(V_TIME_PERFORMED_2)) %>%
+  select(SIRS, first_blood_l) %>% table()
+
+# Day before infection
+TT.tree.data %>% filter(before_blood == TRUE | (blood_onset_tomorrow == TRUE | n_blood == 0))  %>% 
+  dplyr::filter(!is.na(V_TIME_PERFORMED_1) | !is.na(V_TIME_PERFORMED_2)) %>%
+  select(Greenhalgh, blood_onset_tomorrow) %>% table()
+
+TT.tree.data %>% filter(before_blood == TRUE | (blood_onset_tomorrow == TRUE | n_blood == 0))  %>% 
+  dplyr::filter(!is.na(V_TIME_PERFORMED_1) | !is.na(V_TIME_PERFORMED_2)) %>%
+  select(SIRS, blood_onset_tomorrow) %>% table()
+
+# Up to two days before (and including day of) infection
+TT.tree.data %>% filter(before_blood == TRUE | (blood_onset_tomorrow == TRUE | n_blood == 0))  %>% 
+  dplyr::filter(!is.na(V_TIME_PERFORMED_1) | !is.na(V_TIME_PERFORMED_2)) %>%
+  mutate(days_before2 = (days_until_first_blood <=2 & days_until_first_blood >=0),
+         days_before2 = replace(days_before2, is.na(days_before2), FALSE)) %>%
+  select(Greenhalgh, days_before2) %>% 
+  table()
+
+TT.tree.data %>% filter(before_blood == TRUE | (blood_onset_tomorrow == TRUE | n_blood == 0))  %>%
+  dplyr::filter(!is.na(V_TIME_PERFORMED_1) | !is.na(V_TIME_PERFORMED_2)) %>%
+  mutate(days_before2 = (days_until_first_blood <=2 & days_until_first_blood >=0),
+         days_before2 = replace(days_before2, is.na(days_before2), FALSE)) %>%
+  select(SIRS, days_before2) %>% 
+  table()
+
+```
+
+## B. Decision tree models
+
+### Greenhalgh variables only 
+
+```{r gh, cache = T, echo = F}
+
+
+# Show tree plts
+par(mfrow = c(1, 3))
+gh_tree_first_blood$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
+gh_tree_day_before$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
+
+```
+
+### SIRS variables only 
+
+```{r sirs, cache = T, echo = F}
+
+
+# Show tree plts
+par(mfrow = c(1, 3))
+sirs_tree_first_blood$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
+sirs_tree_day_before$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
+
+```
+
+
+### Greenhalth and SIRS variables 
+
+```{r ghsirs, cache = T, echo = F}
+
+
+# Show tree plts
+par(mfrow = c(1, 3))
+ghsirs_tree_first_blood$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
+ghsirs_tree_day_before$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
+
+```
+
+### Compare ROC plots
+
+```{r compare_ROC_1, cache = T, echo = F, fig.height = 12, fig.width = 10}
+
+
+par(mfrow = c(2,2))
+plot_etc(sirs_tree_first_blood, sirs_tree_day_before, sirs_tree_multi_day, main = "SIRS variables only ")
+plot_etc(gh_tree_first_blood, gh_tree_day_before, gh_tree_multi_day, main = "Greenhalgh variables only ")
+
+```
+
+### Compare confusion matrices
+
+
+#### Greenhalgh variables
+```{r compare_CM_Greenhalgh, cache = T, echo = c(1,4,6,9)}
+# First blood infection day
+cm1 = confusion_etc(gh_tree_first_blood$pruned_pred, seq(0,.6, .2))
+cm1
+# Ratios of false positive to true positives in above matrices:
+sapply(cm1, function(x) {x[nrow(x), 1]/ x[nrow(x), 2]})
+# Day before first blood infection day
+cm2 = confusion_etc(gh_tree_day_before$pruned_pred, seq(0,.6, .2))
+cm2
+# Ratios of false positive to true positives in above matrices:
+sapply(cm2, function(x) {x[nrow(x), 1]/ x[nrow(x), 2]})
+
+```
+
+####  SIRS variables
+```{r compare_CM_SIRS, cache = T, echo = c(1,4,6,9)}
+# First blood infection day
+cm1 = confusion_etc(sirs_tree_first_blood$pruned_pred, seq(0,.6, .2))
+cm1
+# Ratios of false positive to true positives in above matrices:
+sapply(cm1, function(x) {x[nrow(x), 1]/ x[nrow(x), 2]})
+# Day before first blood infection day
+cm2 = confusion_etc(sirs_tree_day_before$pruned_pred, seq(0,.6, .2))
+cm2
+# Ratios of false positive to true positives in above matrices:
+sapply(cm2, function(x) {x[nrow(x), 1]/ x[nrow(x), 2]})
+
+```
+
+#### Greenhalgh and SIRS variables 
+```{r compare_CM_ghsirs, cache = T, echo = c(1,4,6,9)}
+# First blood infection day
+cm1 = confusion_etc(ghsirs_tree_first_blood$pruned_pred, seq(0,.6, .2))
+cm1
+# Ratios of false positive to true positives in above matrices:
+sapply(cm1, function(x) {x[nrow(x), 1]/ x[nrow(x), 2]})
+# Day before first blood infection day
+cm2 = confusion_etc(ghsirs_tree_day_before$pruned_pred, seq(0,.6, .2))
+cm2
+# Ratios of false positive to true positives in above matrices:
+sapply(cm2, function(x) {x[nrow(x), 1]/ x[nrow(x), 2]})
+
+```

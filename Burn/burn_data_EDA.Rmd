@@ -117,7 +117,7 @@ TT_ABA = spreadsheets[["ABA_TT_Daily_Collection_Part_1.xlsx"]]
 
 # This is demographic information 
 TT_Demo = spreadsheets[["TT Subject List 8-5-16.xlsx"]]
-write.csv(TT_Demo[[1]], "TT_Demo1.csv")
+write.csv(TT_Demo[[1]], "TT_Demo1.csv", row.names = FALSE)
 
 # This is infection information
 TT_Infection = spreadsheets[["Infection.xlsx"]][[1]]
@@ -181,6 +181,7 @@ TT = TT %>% arrange(PER_CODE, V_DATE_COLLECTION) %>%
       blood_onset_tomorrow = replace_na((days_since_first_collection == (first_blood - 1)), 0),
       before_any = days_since_first_collection < first_any,
       before_blood = days_since_first_collection < first_blood,
+      days_until_first_blood = as.Date(first_blood_date) - as.Date(V_DATE_COLLECTION),
       PDR = as.numeric(PDR)) %>% 
   ungroup()
 
@@ -189,7 +190,7 @@ levels(TT$`study outcome abbr.`)[grepl("Death",levels(TT$`study outcome abbr.`))
 levels(TT$`study outcome abbr.`)[grepl("completed protocol", levels(TT$`study outcome abbr.`))] = "Completed protocol"
 TT$per_code_factor = reorder(TT$per_code_factor, TT$total_days_since_first_collection) #for plot order later
 
-write.csv(TT, "TT_jane.csv")
+write.csv(TT, "TT_jane.csv", row.names = FALSE)
 
 # Individual Data --------------------------------------------------------------------------------------------------------
 
@@ -220,6 +221,8 @@ TT_per = TT %>% group_by(PER_CODE) %>%
              PDR = first(PDR),
              `Admit_date` = first(`Admit Date`)) %>% 
   mutate(n_outcome = as.vector(table(`study outcome abbr.`)[`study outcome abbr.`]))
+
+write.csv(TT_per, "TT_per_jane.csv", row.names = F)
 
 # blood infection
 TT_blood_infection = filter(TT, n_blood > 0) %>% group_by(PER_CODE)

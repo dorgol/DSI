@@ -15,7 +15,7 @@
 # 5. Add a couple exploratory trees to investigate what other variables *might* be useful for future, esp. age given our EDA
 # 6. Remove filter on time_performed_1 and time_performed_2 but save a round of results before I do
 #    Not adding any other filters for now, Sandy confirmed to keep in patients who died 
-# last. Apply to PCR data set
+# 7. last. Apply to PCR data set
 # Ask Pamela if we'd have funders to thank
 
 
@@ -51,9 +51,9 @@ library(tidyr)
 library(readxl)
 
 ndigits = 2
-setwd("~/Documents/DSI/Burn/")
+setwd("~/Documents/DSI/DSI_repo/Burn/")
 
-#   - load DATA, initialize TT.tree.data ####
+#   - load TT DATA ####
 
 TT <- read.csv("TT_jane.csv", stringsAsFactors = F, check.names = F)
 TT$per_code_factor = as.factor(TT$PER_CODE)
@@ -83,37 +83,89 @@ TT = left_join(TT, TT_ABA_2 %>% select(PER_CODE, V_DATE_COLLECTION, V_VENT) %>%
 # Node respiratory rates higher on average for ventilated people
 TT.vent.plot = TT %>% dplyr::select(V_RESPIRATORY_RATE,V_VENT) %>% ggplot() + geom_histogram(aes(x = V_RESPIRATORY_RATE, group = V_VENT, fill = V_VENT), position = "dodge")
 
-# Create new version of data frame for fitting trees ----
+#   - Create new version of data frame for fitting trees ----
+
 TT.tree.data = TT
 Greenhalgh_vars = c("V_TEMPERATURE", "V_HEART_RATE", "V_RESPIRATORY_RATE",  "V_PLATELET_COUNT", "V_GLUCOSE", "V_VENT")
 SIRS_vars = c("V_TEMPERATURE", "V_HEART_RATE", "V_RESPIRATORY_RATE",  "V_WHITE_BC", "V_PACO2")
 other_vars = c("V_PB_SYSTOLIC")
+TT.tree.data$first_or_tomorrow = TT.tree.data$first_blood_l|as.logical(TT.tree.data$blood_onset_tomorrow)
 
-# Impute missing data for Greenhalgh, SIRS and systolic BP using last recorded metric  ----
+#   - Missing data ----
 
+#     + Remove data if blood infection information is missing ----
+
+table(TT.tree.data$Blood, useNA = "always") #238  missing out of 14852  = 1.6%
+TT.tree.data = TT.tree.data[!is.na(TT.tree.data$Blood),]
+dim(TT.tree.data) #now 14614 entries
+
+#     + Impute data using last recorded metric (up to two days) ----
+
+#check that data arranged in date order:
+#TT.tree.data %>% group_by(PER_CODE) %>% mutate(v_date = as.Date(V_DATE_COLLECTION)) %>% select(V_DATE_COLLECTION, v_date)
+#identical(.Last.value, .Last.value %>% arrange(v_date))
+
+TT.tree.data$days_since_last_collection <- (TT.tree.data %>% group_by(PER_CODE) %>% 
+  mutate(v_date = as.Date(V_DATE_COLLECTION)) %>% 
+  mutate(days_since_last_collection = v_date - dplyr::lag(v_date, default = NA)))$days_since_last_collection
+
+TT.tree.data$eligible_to_impute = !is.na(TT.tree.data$days_since_last_collection) & TT.tree.data$days_since_last_collection <=2
+  
 impute_missing_from_previous <- function(x) {
-  which_missing = which(is.na(x))
-  if (length(which_missing) == 0) {
+  which_missing = is.na(x)
+  if (sum(which_missing) == 0) {
     #pass
   } else {
     x[which_missing] = dplyr::lag(x, default = NA)[which_missing]
-    if (is.na(x[1])) {x[]}
-    
   }
   return(x)
 }
 
-apply(TT.tree.data[,unique(c(Greenhalgh_vars, SIRS_vars, other_vars))], 2, function(x) {mean(is.na(x))})
+# impute for up to two days
+tmp_impute =  TT.tree.data %>% group_by(per_code_factor) %>% arrange(V_DATE_COLLECTION) %>%
+         select(unique(c(Greenhalgh_vars, SIRS_vars, other_vars))) %>%
+         mutate_at(unique(c(Greenhalgh_vars, SIRS_vars, other_vars)), impute_missing_from_previous) %>%
+         mutate_at(unique(c(Greenhalgh_vars, SIRS_vars, other_vars)), impute_missing_from_previous) 
 
-tmp  = TT.tree.data %>% group_by(per_code_factor) %>% arrange(V_DATE_COLLECTION) %>%
-  mutate_at(unique(c(Greenhalgh_vars, SIRS_vars, other_vars)), impute_missing_from_previous)
+apply(tmp_impute, 2, function(x) sum(is.na(x)))
 
-apply(tmp[,unique(c(Greenhalgh_vars, SIRS_vars, other_vars))], 2, function(x) {mean(is.na(x))})
+# If it wasn't eligibigle for imputation, revert to NA
+for (elem in unique(c(Greenhalgh_vars, SIRS_vars, other_vars))) {
+  tmp_impute[is.na(TT.tree.data[[elem]]) & !TT.tree.data$eligible_to_impute, elem] = NA
+}
 
-tmp  = tmp %>% group_by(per_code_factor) %>% arrange(V_DATE_COLLECTION) %>%
-  mutate_at(unique(c(Greenhalgh_vars, SIRS_vars, other_vars)), impute_missing_from_previous)
+apply(tmp_impute, 2, function(x) sum(is.na(x)))
 
-apply(tmp[,unique(c(Greenhalgh_vars, SIRS_vars, other_vars))], 2, function(x) {mean(is.na(x))})
+names(tmp_impute) = paste(names(tmp_impute))
+
+#     + How much missing data before and after imputation? ----
+how_much_missing = data.frame(before_imputation = round(apply(TT.tree.data %>% select(c(Greenhalgh_vars, SIRS_vars, other_vars)),
+                                                              2, function(x) {mean(is.na(x))}), 2),
+                              before_imputation = round(apply(tmp_impute[,-1], 2, function(x) {mean(is.na(x))}), 2))
+
+
+#     + TT.tree.data.raw = Rename original data "raw" and imputed is now the standard name ----
+
+TT.tree.data.raw = TT.tree.data
+
+names(TT.tree.data)[names(TT.tree.data) %in% unique(c(Greenhalgh_vars, SIRS_vars, other_vars))] =
+  paste0(names(TT.tree.data)[names(TT.tree.data) %in% unique(c(Greenhalgh_vars, SIRS_vars, other_vars))], "_raw")
+
+TT.tree.data = cbind(TT.tree.data, tmp_impute[,-1])
+
+
+# 
+# apply(TT.tree.data[,unique(c(Greenhalgh_vars, SIRS_vars, other_vars))], 2, function(x) {mean(is.na(x))})
+# 
+# tmp  = TT.tree.data %>% group_by(per_code_factor) %>% arrange(V_DATE_COLLECTION) %>%
+# 
+# 
+# tmp  = tmp %>% group_by(per_code_factor) %>% arrange(V_DATE_COLLECTION) %>%
+#   mutate_at(unique(c(Greenhalgh_vars, SIRS_vars, other_vars)), impute_missing_from_previous)
+# 
+# 
+# TT.tree.data %>% select(unique(c(Greenhalgh_vars, SIRS_vars, other_vars)))
+
 
 #   - Add the criteria (best I can) to the TT data ####
 
@@ -131,7 +183,19 @@ TT.tree.data = TT.tree.data %>%
                                gh_abnorm_plat_count, gh_abnorm_glucose), na.rm = T) >= 3
   )
 
+# Not much correlation between these
 TT.tree.data %>% select(contains("gh_")) %>% cor(use = "pairwise") %>% round(2)
+
+TT.tree.data.raw = TT.tree.data.raw %>% 
+  mutate(
+    gh_abnorm_temp = (V_TEMPERATURE > 39 | V_TEMPERATURE < 36.5),
+    gh_abnorm_heart_rate = V_HEART_RATE > 110,
+    gh_abnorm_resp_rate = V_RESPIRATORY_RATE > 25 & !V_VENT,
+    gh_abnorm_plat_count = V_PLATELET_COUNT < 100,
+    gh_abnorm_glucose = V_GLUCOSE > 200,
+    Greenhalgh = rowSums(cbind(gh_abnorm_temp, gh_abnorm_heart_rate, gh_abnorm_resp_rate,
+                               gh_abnorm_plat_count, gh_abnorm_glucose), na.rm = T) >= 3
+  )
 
 #     - Add SIRS features (see Greenhalgh et all p. 777 for the ranges used) ----
 # Consider bad SIRS criteria - "The definition is so inclusive as to be meaningless."
@@ -148,22 +212,31 @@ TT.tree.data = TT.tree.data %>%
                          sirs_abnorm_wbc), na.rm = T) >= 2
   )
 
+# Not much correlation between these
 TT.tree.data %>% select(contains("sirs_")) %>% cor(use = "pairwise") %>% round(2)
 
-# How much missing data?
-round(sapply( TT.tree.data %>% select(contains("abnorm")), function(x) { sum(is.na(x)) / nrow(TT.tree.data) } ), 3)
+TT.tree.data.raw = TT.tree.data.raw %>% 
+  mutate(
+    sirs_abnorm_tmp = (V_TEMPERATURE > 38 | V_TEMPERATURE < 36),
+    sirs_abnorm_heart_rate =  V_HEART_RATE > 90,
+    # supposed to be maintenance of PaCO2 > 32 - what counts as maintenance?:
+    sirs_abnorm_resp_rate =  (!is.na(V_RESPIRATORY_RATE) & V_RESPIRATORY_RATE > 20) | (!is.na(V_PACO2) & V_PACO2 < 32),
+    #note this also says "or left shift defined as > 10% of bands, what does that mean?:
+    sirs_abnorm_wbc = (V_WHITE_BC < 4 | V_WHITE_BC > 12),
+    SIRS = rowSums(cbind(sirs_abnorm_tmp, sirs_abnorm_heart_rate, sirs_abnorm_resp_rate,
+                         sirs_abnorm_wbc), na.rm = T) >= 2
+  )
+
 
 #     - Compare SIRS and Greenhalgh by Confusion Matrix -- Neither is good. LOTS of false positives ----
 
-#How much missing data?
-TT.tree.data %>% select(contains("abnorm_")) %>% colMeans(na.rm = T) %>% round(2)
 #How many caes?
 table(TT_per$n_blood) #70 patients out of 246 had any blood infection
 #How many days satisfying criteria?
 table(TT.tree.data$SIRS) 
 table(TT.tree.data$Greenhalgh)
 
-# Confusion matrix for different criteria 
+#         + Confusion matrix for different criteria  - with imputed data ----
 
 # First blood infection day
 TT.tree.data %>% filter(before_blood == TRUE | (first_blood_l == TRUE | n_blood == 0))  %>% 
@@ -183,9 +256,34 @@ TT.tree.data %>% filter(before_blood == TRUE | (blood_onset_tomorrow == TRUE | n
 round(prop.table(table(TT.tree.data$sirs_abnorm_tmp, TT.tree.data$first_blood_l), 1), 3)
 round(prop.table(table(TT.tree.data$gh_abnorm_temp, TT.tree.data$blood_onset_tomorrow), 1), 3)
 
-# Any infection day
+# Any infection day (not just first)
 round(prop.table(table(TT.tree.data$Greenhalgh, TT.tree.data$Blood), 1), 2)
 round(prop.table(table(TT.tree.data$SIRS, TT.tree.data$Blood), 1), 2)
+
+#         + Confusion matrix for different criteria  - with raw data (almost identical) ----
+
+# First blood infection day
+TT.tree.data.raw %>% filter(before_blood == TRUE | (first_blood_l == TRUE | n_blood == 0))  %>% 
+  select(Greenhalgh, first_blood_l) %>% table() %>% prop.table(1) %>% round(3)
+
+TT.tree.data.raw %>% filter(before_blood == TRUE | (first_blood_l == TRUE | n_blood == 0))  %>% 
+  select(SIRS, first_blood_l) %>% table() %>% prop.table(1) %>% round(3)
+
+# Day before infection
+TT.tree.data.raw %>% filter(before_blood == TRUE | (blood_onset_tomorrow == TRUE | n_blood == 0))  %>% 
+  select(Greenhalgh, blood_onset_tomorrow) %>% table() %>% prop.table(1) %>% round(3)
+
+TT.tree.data.raw %>% filter(before_blood == TRUE | (blood_onset_tomorrow == TRUE | n_blood == 0))  %>% 
+  select(SIRS, blood_onset_tomorrow) %>% table() %>% prop.table(1) %>% round(3)
+
+#Check abnorm temperature specifically
+round(prop.table(table(TT.tree.data.raw$sirs_abnorm_tmp, TT.tree.data.raw$first_blood_l), 1), 3)
+round(prop.table(table(TT.tree.data.raw$gh_abnorm_temp, TT.tree.data.raw$blood_onset_tomorrow), 1), 3)
+
+# Any infection day (not just first)
+round(prop.table(table(TT.tree.data.raw$Greenhalgh, TT.tree.data.raw$Blood), 1), 2)
+round(prop.table(table(TT.tree.data.raw$SIRS, TT.tree.data.raw$Blood), 1), 2)
+
 
 
 #   - Helper functions ----
@@ -195,8 +293,10 @@ cumsum2 <- function(v) {cumsum(replace_na(v, 0))}
 
 # input data set as dataframe
 # setting day_cutoff (with y_var "days_until_first_blood") will set a "TRUE" response to be that the individual will have a blood infection within [day_cutoff] days. For example, day_cutoff 1 means that day or the next.
+# rel.freq = how frequently positive cases should occur relative to negative -> weights for positive cases adjusted accordingly. If null, no weights.
 
-tree_etc <- function(dataset, x_vars, y_var, days_before = NULL, minbucket = 10, cp = .01, xval = 200, weights = 99, maxsurrogate = 1, usesurrogate = 2) {
+tree_etc <- function(dataset, x_vars, y_var, days_before = NULL, minbucket = 10, cp = .01, xval = 200,
+                     rel.freq = 1, maxsurrogate = 1, usesurrogate = 2) {
  
   if (is.null(days_before)) {
     dataset$response = dataset[[y_var]]
@@ -205,16 +305,20 @@ tree_etc <- function(dataset, x_vars, y_var, days_before = NULL, minbucket = 10,
     dataset$response[is.na(dataset$response)] = FALSE
   }
 
-  tree = dataset %>% 
+  tree.data = dataset %>% 
           dplyr::filter(before_blood != FALSE | (response == TRUE | n_blood == 0)) %>% 
           # can only detect blood infection if at least one of these tests was performed 
               # Only 2 entries have Blood infection reported when neither Blood CBC and Chemisty were performed )
-          dplyr::filter(!is.na(V_TIME_PERFORMED_1) | !is.na(V_TIME_PERFORMED_2)) %>% 
-          select(c(x_vars, "response")) %>%
-          rpart(formula = response ~ . ,
+          dplyr::filter(!is.na(V_TIME_PERFORMED_1) | !is.na(V_TIME_PERFORMED_2)) %>%
+          select(c(x_vars, "response"))
+       
+  weight = ifelse(is.null(rel.freq), 0, rel.freq/(1-mean(!tree.data$response)))
+  
+  tree = rpart(tree.data,
+               formula = response ~ . ,
                 control = rpart.control(minbucket = minbucket, cp = cp, xval = xval, 
                                         usesurrogate = usesurrogate, maxsurrogate = maxsurrogate), 
-                weights = weights*(response)+1,
+                weights = weight*(response)+1,
                 model = TRUE, y = TRUE) 
   
   cptable = tree$cptable
@@ -258,18 +362,15 @@ confusion_etc <- function(prediction, quantiles) {
 }
 
 #     - (ROC) plot_etc ----
-plot_etc = function(fit1, fit2, fit3, main = "") {
+plot_etc = function(fit1, fit2, main = "") {
   plot(performance(fit1$pruned_pred, "tpr", "fpr"), main = main)
   abline(a = 0, b = 1, lty = 3)
   points( performance(fit2$pruned_pred, "tpr", "fpr")@"x.values"[[1]],  
           performance(fit2$pruned_pred, "tpr", "fpr")@"y.values"[[1]], type = "l", col = "red")
-  points( performance(fit3$pruned_pred, "tpr", "fpr")@"x.values"[[1]],  
-          performance(fit3$pruned_pred, "tpr", "fpr")@"y.values"[[1]], type = "l", col = "blue")
   legend("bottomright", 
          legend = c(paste("day of; ", "AUC = ", round(fit1$pruned_auc, 2)),
-                    paste("day before; ", "AUC = ", round(fit2$pruned_auc, 2)),
-                    paste("period up to 2 days before; ", "AUC = ", round(fit3$pruned_auc, 2))),
-         col = c(1,2,3), lty = 1)
+                    paste("day before; ", "AUC = ", round(fit2$pruned_auc, 2))),
+         col = c(1,2), lty = 1)
 }
 
 # ------------------------------------------------------------------------------------------------------------------------------
@@ -280,23 +381,32 @@ plot_etc = function(fit1, fit2, fit3, main = "") {
 
 xval1  = 5000 # Choose xval large enough so that xval xerror within xstd 
 
+#  - Greenhalgh ----
+
+# large weights ----
 # Fit tree and pruned tree
 par(mfrow = c(3,3))
 gh_tree_first_blood = tree_etc(TT.tree.data,
                                x_vars = c(Greenhalgh_vars, "Greenhalgh"),
                                y_var = "first_blood_l",
-                               xval = xval1, cp = .01, weights = 139) #table(gh_tree_first_blood$tree$model$response, useNA = "a")
+                               xval = xval1, cp = .01, rel.freq = .5, maxsurrogate = 5) #table(gh_tree_first_blood$tree$model$response, useNA = "a")
 
 gh_tree_day_before= tree_etc(TT.tree.data,
                              x_vars = c(Greenhalgh_vars, "Greenhalgh"),
                              y_var = "blood_onset_tomorrow",
-                             xval = xval1, cp = .01, weights = 145) #table(gh_tree_day_before$tree$model$response, useNA = "a")
+                             xval = xval1, cp = .01, rel.freq = 145) #table(gh_tree_day_before$tree$model$response, useNA = "a")
+
+gh_tree_day_first_or_before= tree_etc(TT.tree.data,
+                             x_vars = c(Greenhalgh_vars, "Greenhalgh"),
+                             y_var = "first_or_tomorrow",
+                             xval = xval1, cp = .01, rel.freq = 145) #table(gh_tree_day_before$tree$model$response, useNA = "a")
+
 
 # gh_tree_multi_day = tree_etc(TT.tree.data,
 #                         x_vars = c(Greenhalgh_vars, "Greenhalgh"), 
 #                         days_before = 2,
 #                         y_var = "days_until_first_blood",
-#                         xval = xval1, cp = .01, weights = 47) #table(gh_tree_multi_day$tree$model$response, useNA = "a")
+#                         xval = xval1, cp = .01, rel.freq = 47) #table(gh_tree_multi_day$tree$model$response, useNA = "a")
 
 # Show tree plts
 par(mfrow = c(1, 3))
@@ -312,6 +422,45 @@ confusion_etc(gh_tree_first_blood$pruned_pred, seq(0,1, .25))
 confusion_etc(gh_tree_day_before$pruned_pred, seq(0,1, .25))
 #confusion_etc(gh_tree_multi_day$pruned_pred, seq(0,1, .25))
 
+# small weights ----
+
+gh_tree_first_blood_sm = tree_etc(TT.tree.data,
+                               x_vars = c(Greenhalgh_vars, "Greenhalgh"),
+                               y_var = "first_blood_l",
+                               xval = xval1, cp = .01, rel.freq = 9) #table(gh_tree_first_blood$tree$model$response, useNA = "a")
+
+gh_tree_day_before_sm = tree_etc(TT.tree.data,
+                             x_vars = c(Greenhalgh_vars, "Greenhalgh"),
+                             y_var = "blood_onset_tomorrow",
+                             xval = xval1, cp = .01, rel.freq = 9) #table(gh_tree_day_before$tree$model$response, useNA = "a")
+
+# gh_tree_multi_day = tree_etc(TT.tree.data,
+#                         x_vars = c(Greenhalgh_vars, "Greenhalgh"), 
+#                         days_before = 2,
+#                         y_var = "days_until_first_blood",
+#                         xval = xval1, cp = .01, rel.freq = 47) #table(gh_tree_multi_day$tree$model$response, useNA = "a")
+
+# almost weights (uninformative) ----
+
+gh_tree_first_blood_sm = tree_etc(TT.tree.data,
+                                  x_vars = c(Greenhalgh_vars, "Greenhalgh"),
+                                  y_var = "first_blood_l",
+                                  xval = xval1, cp = .01, rel.freq = 1) #table(gh_tree_first_blood$tree$model$response, useNA = "a")
+
+gh_tree_day_before_sm = tree_etc(TT.tree.data,
+                                 x_vars = c(Greenhalgh_vars, "Greenhalgh"),
+                                 y_var = "blood_onset_tomorrow",
+                                 xval = xval1, cp = .01, rel.freq = 1) #table(gh_tree_day_before$tree$model$response, useNA = "a")
+
+gh_tree_first_blood_sm = tree_etc(TT.tree.data.raw,
+                                  x_vars = c(Greenhalgh_vars, "Greenhalgh"),
+                                  y_var = "first_blood_l",
+                                  xval = xval1, cp = .01, rel.freq = 1) #table(gh_tree_first_blood$tree$model$response, useNA = "a")
+
+gh_tree_day_before_sm = tree_etc(TT.tree.data.raw,
+                                 x_vars = c(Greenhalgh_vars, "Greenhalgh"),
+                                 y_var = "blood_onset_tomorrow",
+                                 xval = xval1, cp = .01, rel.freq = 1) #table(gh_tree_day_before$tree$model$response, useNA = "a")
 
 #  - SIRS ----
 
@@ -320,18 +469,18 @@ par(mfrow = c(3,3))
 sirs_tree_first_blood = tree_etc(TT.tree.data, 
                                  x_vars = c(SIRS_vars, "SIRS"), 
                                  y_var = "first_blood_l",
-                                 xval = xval1, cp = .01, weights = 139)
+                                 xval = xval1, cp = .01, rel.freq = 139)
 
 sirs_tree_day_before= tree_etc(TT.tree.data, 
                                x_vars = c(SIRS_vars, "SIRS"), 
                                y_var = "blood_onset_tomorrow",
-                               xval = xval1, cp = .01, weights = 145)
+                               xval = xval1, cp = .01, rel.freq = 145)
 
 # sirs_tree_multi_day = tree_etc(TT.tree.data,
 #                              x_vars = c(SIRS_vars, "SIRS"), 
 #                              days_before = 2,
 #                              y_var = "days_until_first_blood",
-#                              xval = xval1, cp = .01, weights = 47)
+#                              xval = xval1, cp = .01, rel.freq = 47)
 
 # Show tree plts
 par(mfrow = c(1, 3))
@@ -348,13 +497,13 @@ confusion_etc(sirs_tree_day_before$pruned_pred, seq(0,1, .25))
 # 2. Decision trees from Greenhalgh and Sirs variables COMBINED 
 # ------------------------------------------------------------------------------------------------------------------------------
 
-xval2 = 5000
+xval2 = 50
 
 par(mfrow = c(3,3))
 ghsirs_tree_first_blood = tree_etc(TT.tree.data, 
                                    x_vars = unique(c(Greenhalgh_vars, SIRS_vars)),
                                    y_var = "first_blood_l", 
-                                   xval = xval2, cp = .01, weights = 139) #table(ghsirs_tree_first_blood$tree$model$response, useNA = "a")
+                                   xval = xval2, cp = .01, rel.freq = 139) #table(ghsirs_tree_first_blood$tree$model$response, useNA = "a")
 
 ghsirs_tree_first_blood$pruned_tree$cptable
 ghsirs_tree_first_blood$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
@@ -362,7 +511,7 @@ ghsirs_tree_first_blood$pruned_tree %>% rpart.plot(., roundint = FALSE, digits =
 ghsirs_tree_day_before= tree_etc(TT.tree.data, 
                                  x_vars = unique(c(Greenhalgh_vars, SIRS_vars)),
                                  y_var = "blood_onset_tomorrow", 
-                                 xval = xval2, cp = .01, weights = 145)
+                                 xval = xval2, cp = .01, rel.freq = 145)
 
 # Show tree plts
 par(mfrow = c(1, 3))
@@ -385,13 +534,13 @@ ghsirsplus_tree_first_blood = tree_etc(TT.tree.data,
                                    x_vars = c(Greenhalgh_vars, "Greenhalgh", SIRS_vars, "SIRS",
                                               "Age", "Gender", "TBSA"),
                                    y_var = "first_blood_l", 
-                                   xval = xval3, cp = .01, weights = 139)
+                                   xval = xval3, cp = .01, rel.freq = 139)
 
 ghsirsplus_tree_day_before= tree_etc(TT.tree.data, 
                                  x_vars = c(Greenhalgh_vars, "Greenhalgh", SIRS_vars, "SIRS",
                                             "Age", "Gender", "TBSA"),
                                  y_var = "blood_onset_tomorrow", 
-                                 xval = xval3, cp = .01, weights = 145)
+                                 xval = xval3, cp = .01, rel.freq = 145)
 # Show tree plts
 par(mfrow = c(1, 3))
 ghsirsplus_tree_first_blood$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = ndigits, extra = 1)
@@ -405,7 +554,7 @@ confusion_etc(ghsirsplus_tree_day_before$pruned_pred, seq(0,1, .1))
 # ------------------------------------------------------------------------------------------------------------------------------
 # 4. All vars  ----
 
-xval4 = 5000
+xval4 = 50
 
 all.var = c('V_PB_SYSTOLIC', 'V_BP_DIASTOLIC', 'V_MEANARTERIAL_PRESSURE', 'V_HEART_RATE', 'V_RESPIRATORY_RATE', 'V_TEMPERATURE',
             'V_CENTRAL_VENOUS_PRESSURE', 'V_GLASCOWCOMA_SCALE', 'V_WHITE_BC', 'V_HEMOGLOBIN', 'V_HEMATOCRIT', 'V_PLATELET_COUNT',
@@ -429,7 +578,7 @@ all_tree_first_blood$pruned_tree %>% rpart.plot(., roundint = FALSE, digits = nd
 all_tree_day_before= tree_etc(TT.tree.data, 
                                      x_vars = all.var,
                                      y_var = "blood_onset_tomorrow", 
-                                     xval = xval4, cp = .01, weights = 145)
+                                     xval = xval4, cp = .01, rel.freq = 145)
 
 #TT.tree.data %>% 
 #  dplyr::filter(before_blood != FALSE | (first_blood_l == TRUE | n_blood == 0)) %>% 
@@ -475,7 +624,7 @@ TT.tree.data = TT.tree.data %>% group_by(per_code_factor) %>% arrange(V_DATE_COL
   ungroup()
 
 
-xval5 = 5000
+xval5 = 50
 cumvars = names(TT.tree.data)[grep(names(TT.tree.data), pattern = "cum_")]
 
 par(mfrow = c(3,3))
@@ -483,13 +632,13 @@ ghsirspluscum_tree_first_blood = tree_etc(TT.tree.data,
                                        x_vars = c(Greenhalgh_vars, "Greenhalgh", SIRS_vars, "SIRS",
                                                   "Age", "Gender", "TBSA", cumvars),
                                        y_var = "first_blood_l", 
-                                       xval = xval5, cp = .01, weights = 139)
+                                       xval = xval5, cp = .01, rel.freq = 139)
 
 ghsirspluscum_tree_day_before= tree_etc(TT.tree.data, 
                                      x_vars = c(Greenhalgh_vars, "Greenhalgh", SIRS_vars, "SIRS",
                                                 "Age", "Gender", "TBSA", cumvars),
                                      y_var = "blood_onset_tomorrow", 
-                                     xval = xval5, cp = .01, weights = 145)
+                                     xval = xval5, cp = .01, rel.freq = 145)
 
 # Show tree plts
 par(mfrow = c(1, 3))
